@@ -1,0 +1,156 @@
+"""Busca de cotações e cálculo de retorno.
+
+Módulo compartilhado pelo programa de terminal (main.py) e pelo app web
+(app.py). Fonte dos dados: Yahoo Finance.
+"""
+
+import contextlib
+import io
+import logging
+import warnings
+from datetime import datetime, timedelta
+
+warnings.filterwarnings("ignore")
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
+import yfinance as yf  # noqa: E402  (depois do filtro de warnings, de propósito)
+
+from tickers import candidatos
+
+FORMATOS_DATA = ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y")
+SIMBOLO_MOEDA = {"BRL": "R$", "USD": "US$", "EUR": "€", "GBP": "£", "JPY": "¥"}
+
+
+@contextlib.contextmanager
+def sem_ruido():
+    """Engole o que a biblioteca imprime ao testar códigos que não existem."""
+    lixo = io.StringIO()
+    with contextlib.redirect_stderr(lixo), contextlib.redirect_stdout(lixo):
+        yield
+
+
+def ler_data(texto: str):
+    """Converte '31/12/2024' (ou variantes) em datetime. None se inválida."""
+    texto = (texto or "").strip()
+    for formato in FORMATOS_DATA:
+        try:
+            return datetime.strptime(texto, formato)
+        except ValueError:
+            continue
+    return None
+
+
+def buscar_historico(entrada: str, inicio: datetime, fim: datetime):
+    """Tenta cada símbolo candidato até achar dados no período.
+
+    Retorna (simbolo, DataFrame, moeda, nome) ou (None, None, None, None).
+    """
+    # O Yahoo trata 'end' como exclusivo: soma 1 dia para incluir a data final.
+    fim_exclusivo = fim + timedelta(days=1)
+
+    for simbolo in candidatos(entrada):
+        try:
+            with sem_ruido():
+                papel = yf.Ticker(simbolo)
+                df = papel.history(
+                    start=inicio.strftime("%Y-%m-%d"),
+                    end=fim_exclusivo.strftime("%Y-%m-%d"),
+                    auto_adjust=False,
+                    actions=False,
+                )
+        except Exception:
+            continue
+
+        if df is None or df.empty or "Close" not in df.columns:
+            continue
+
+        df = df.dropna(subset=["Close"])
+        if len(df) < 2:
+            continue
+
+        moeda, nome = "", simbolo
+        with sem_ruido():
+            try:
+                info = papel.fast_info
+                moeda = (info.get("currency") or "") if hasattr(info, "get") else ""
+            except Exception:
+                pass
+            try:
+                dados = papel.info
+                nome = dados.get("longName") or dados.get("shortName") or simbolo
+            except Exception:
+                pass
+
+        return simbolo, df, moeda, nome
+
+    return None, None, None, None
+
+
+def calcular(df):
+    """Métricas do período a partir do histórico."""
+    # 'Adj Close' já embute proventos e desdobramentos (retorno total).
+    coluna_total = "Adj Close" if "Adj Close" in df.columns else "Close"
+    serie_total = df[coluna_total].dropna()
+    serie_preco = df["Close"].dropna()
+
+    inicio_total, fim_total = float(serie_total.iloc[0]), float(serie_total.iloc[-1])
+    inicio_preco, fim_preco = float(serie_preco.iloc[0]), float(serie_preco.iloc[-1])
+
+    retorno_total = fim_total / inicio_total - 1
+    retorno_preco = fim_preco / inicio_preco - 1
+
+    data_ini = serie_total.index[0].to_pydatetime()
+    data_fim = serie_total.index[-1].to_pydatetime()
+    dias = max((data_fim - data_ini).days, 1)
+    anos = dias / 365.25
+
+    # Retorno anualizado só faz sentido a partir de ~1 mês de janela.
+    anualizado = (1 + retorno_total) ** (1 / anos) - 1 if anos >= 0.08 else None
+
+    drawdown = float((serie_total / serie_total.cummax() - 1).min())
+
+    variacao_diaria = serie_total.pct_change().dropna()
+    volatilidade = (
+        float(variacao_diaria.std() * (252 ** 0.5)) if len(variacao_diaria) > 1 else None
+    )
+
+    melhor_dia = pior_dia = None
+    if not variacao_diaria.empty:
+        melhor_dia = (variacao_diaria.idxmax().to_pydatetime(), float(variacao_diaria.max()))
+        pior_dia = (variacao_diaria.idxmin().to_pydatetime(), float(variacao_diaria.min()))
+
+    return {
+        "data_ini": data_ini,
+        "data_fim": data_fim,
+        "preco_ini": inicio_preco,
+        "preco_fim": fim_preco,
+        "retorno_total": retorno_total,
+        "retorno_preco": retorno_preco,
+        "tem_proventos": coluna_total == "Adj Close" and abs(retorno_total - retorno_preco) > 1e-6,
+        "anualizado": anualizado,
+        "drawdown": drawdown,
+        "volatilidade": volatilidade,
+        "pregoes": len(serie_total),
+        "maxima": float(serie_preco.max()),
+        "minima": float(serie_preco.min()),
+        "melhor_dia": melhor_dia,
+        "pior_dia": pior_dia,
+        "serie": serie_total,
+    }
+
+
+# --------------------------------------------------------------------------
+# Formatação no padrão brasileiro
+# --------------------------------------------------------------------------
+def pct(valor, sinal=True):
+    modelo = f"{valor * 100:+,.2f}%" if sinal else f"{valor * 100:,.2f}%"
+    return modelo.replace(",", "@").replace(".", ",").replace("@", ".")
+
+
+def dinheiro(valor, simbolo):
+    texto = f"{valor:,.2f}".replace(",", "@").replace(".", ",").replace("@", ".")
+    return f"{simbolo} {texto}" if simbolo else texto
+
+
+def data_br(data):
+    return data.strftime("%d/%m/%Y")
