@@ -33,7 +33,7 @@ def _sgs(serie: int, inicio, fim):
         f"?formato=json&dataInicial={inicio:%d/%m/%Y}&dataFinal={fim:%d/%m/%Y}"
     )
     pedido = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(pedido, timeout=30) as resposta:
+    with urllib.request.urlopen(pedido, timeout=15) as resposta:
         dados = json.loads(resposta.read().decode("utf-8"))
 
     if not dados:
@@ -74,31 +74,42 @@ def _fator_yahoo(simbolo: str, inicio, fim):
 
 
 def fator(nome: str, inicio, fim):
-    """Baixa a série bruta do índice (fator acumulado). None se falhar.
+    """Baixa a série bruta do índice. Devolve (Series, "") ou (None, motivo).
 
-    Separado de alinhar() de propósito: só isto depende da rede, então é o
-    que vale a pena guardar em cache. O alinhamento muda a cada ativo.
+    Separado do alinhamento de propósito: só isto depende da rede, então é o
+    que vale a pena guardar em cache. O motivo da falha vem junto porque um
+    índice mudo na tela não diz se a fonte caiu, recusou o pedido ou apenas
+    não tem dado para o período.
     """
     config = BENCHMARKS[nome]
     try:
         if config["fonte"] == "bcb":
-            return _fator_bcb(config["serie"], inicio, fim)
-        return _fator_yahoo(config["simbolo"], inicio, fim)
-    except Exception:
-        return None
+            serie = _fator_bcb(config["serie"], inicio, fim)
+        else:
+            serie = _fator_yahoo(config["simbolo"], inicio, fim)
+    except Exception as erro:
+        return None, f"{nome}: {type(erro).__name__}: {erro}"
+
+    if serie is None or serie.empty:
+        return None, f"{nome}: a fonte respondeu sem dados para o período"
+    return serie, ""
 
 
 def curva(nome: str, inicio, fim, datas_alvo, serie_fator=None):
+    # serie_fator, quando vem, é a tupla (Series, motivo) devolvida por fator().
     """Retorno acumulado em %, alinhado às datas de pregão do ativo.
 
     Devolve (Series, aviso) — o aviso conta quando a série termina antes do
     fim do período, como acontece com o IPCA, divulgado com defasagem.
     Devolve (None, motivo) se a fonte não respondeu.
     """
-    serie = serie_fator if serie_fator is not None else fator(nome, inicio, fim)
+    if serie_fator is None:
+        serie, motivo = fator(nome, inicio, fim)
+    else:
+        serie, motivo = serie_fator
 
     if serie is None or serie.empty:
-        return None, f"{nome}: sem dados no período"
+        return None, motivo or f"{nome}: sem dados no período"
 
     # Alinha ao calendário do ativo: repete o último valor conhecido nos dias
     # sem cotação (fim de semana, feriado, mês do IPCA ainda não divulgado).

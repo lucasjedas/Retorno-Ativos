@@ -248,7 +248,7 @@ if calcular_agora or st.session_state.get("ja_calculou"):
                     serie_fator=buscar_indice(nome, inicio, fim),
                 )
                 if linha is None:
-                    falhas.append(recado)
+                    falhas.append((nome, recado))
                     continue
                 colunas[nome] = linha
                 cores.append(BENCHMARKS[nome]["cor"])
@@ -267,7 +267,11 @@ if calcular_agora or st.session_state.get("ja_calculou"):
     for recado in avisos:
         st.caption(f"⚠️ {recado}")
     if falhas:
-        st.caption("Não consegui buscar: " + "; ".join(falhas))
+        st.warning(
+            "Não consegui traçar: " + "; ".join(nome for nome, _ in falhas)
+        )
+        with st.expander("Por que o índice não apareceu"):
+            st.code("\n".join(motivo for _, motivo in falhas), language="text")
 
     # Placar do período — só faz sentido quando há com quem comparar.
     if len(colunas) > 1:
