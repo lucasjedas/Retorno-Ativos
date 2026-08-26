@@ -4,6 +4,7 @@ Rodar localmente:   .venv/bin/streamlit run app.py
 Fonte dos dados:    Yahoo Finance.
 """
 
+import traceback
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -243,10 +244,20 @@ if calcular_agora or st.session_state.get("ja_calculou"):
     if comparar:
         with st.spinner("Buscando os índices..."):
             for nome in comparar:
-                linha, recado = curva_indice(
-                    nome, inicio, fim, serie.index,
-                    bruto=buscar_indice(nome, inicio, fim),
-                )
+                # Um índice que quebra não pode levar a página junto: o
+                # resultado do ativo já está calculado e é o que o usuário
+                # veio ver. A falha vira aviso, com o traceback à mão.
+                try:
+                    linha, recado = curva_indice(
+                        nome, inicio, fim, serie.index,
+                        bruto=buscar_indice(nome, inicio, fim),
+                    )
+                except Exception as erro:
+                    falhas.append(
+                        (nome, f"{nome}: {type(erro).__name__}: {erro}\n"
+                               f"{traceback.format_exc()}")
+                    )
+                    continue
                 if linha is None:
                     falhas.append((nome, recado))
                     continue

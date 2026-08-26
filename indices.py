@@ -47,6 +47,18 @@ BENCHMARKS = {
 }
 
 
+def _sem_fuso(datas) -> pd.DatetimeIndex:
+    """DatetimeIndex sem fuso, na meia-noite do dia.
+
+    Cada fonte data de um jeito: o IPEA manda offset (-03:00), o Yahoo manda o
+    fuso da bolsa, o BCB manda só a data. Alinhar um índice com fuso contra um
+    sem fuso devolve um Index de objetos no pandas 2 e levanta TypeError no
+    pandas 3 — que é o que o Streamlit Cloud instala. Passar por UTC e zerar a
+    hora deixa as três fontes no mesmo formato.
+    """
+    return pd.DatetimeIndex(pd.to_datetime(datas, utc=True)).tz_convert(None).normalize()
+
+
 def _baixar(url: str):
     pedido = urllib.request.Request(url, headers=CABECALHOS)
     with urllib.request.urlopen(pedido, timeout=ESPERA) as resposta:
@@ -61,7 +73,7 @@ def _taxas_sgs(serie: int, inicio, fim):
     dados = _baixar(url)
     if not dados:
         return None
-    datas = pd.to_datetime([x["data"] for x in dados], format="%d/%m/%Y")
+    datas = _sem_fuso(pd.to_datetime([x["data"] for x in dados], format="%d/%m/%Y"))
     return pd.Series([float(x["valor"]) for x in dados], index=datas).sort_index()
 
 
@@ -74,15 +86,20 @@ def _taxas_ipea(codigo: str, inicio, fim):
     dados = _baixar(IPEA.format(codigo=codigo))["value"]
     if not dados:
         return None
-    pares = {
-        pd.to_datetime(x["VALDATA"]).tz_localize(None).normalize(): x["VALVALOR"]
-        for x in dados
-        if x.get("VALVALOR") is not None
-    }
-    serie = pd.Series(pares).sort_index()
+    validos = [x for x in dados if x.get("VALVALOR") is not None]
+    if not validos:
+        return None
+    serie = pd.Series(
+        [float(x["VALVALOR"]) for x in validos],
+        index=_sem_fuso([x["VALDATA"] for x in validos]),
+    ).sort_index()
+
     # Margem para trás: as taxas são datadas no dia 1º, então sem folga o mês
-    # em que o período começa ficaria de fora.
-    return serie[str(inicio - timedelta(days=45)):str(fim)]
+    # em que o período começa ficaria de fora. Recorte por máscara, e não por
+    # fatia de texto, que muda de comportamento entre versões do pandas.
+    desde = pd.Timestamp(inicio) - pd.Timedelta(days=45)
+    ate = pd.Timestamp(fim)
+    return serie[(serie.index >= desde) & (serie.index <= ate)]
 
 
 def _conferir_variacoes(taxas, nome: str):
@@ -134,8 +151,7 @@ def _fator_yahoo(simbolo: str, inicio, fim):
         return None, "Yahoo Finance"
     coluna = "Adj Close" if "Adj Close" in df.columns else "Close"
     serie = df[coluna].dropna()
-    if serie.index.tz is not None:
-        serie = serie.tz_localize(None)
+    serie.index = _sem_fuso(serie.index)
     return serie, "Yahoo Finance"
 
 
@@ -173,9 +189,16 @@ def curva(nome: str, inicio, fim, datas_alvo, bruto=None):
         return None, motivo or f"{nome}: sem dados no período"
 
     # Alinha ao calendário do ativo: repete o último valor conhecido nos dias
-    # sem cotação (fim de semana, feriado, mês ainda não divulgado).
-    unido = serie.index.union(datas_alvo)
-    alinhado = serie.reindex(unido).ffill().reindex(datas_alvo).ffill().bfill()
+    # sem cotação (fim de semana, feriado, mês ainda não divulgado). Os dois
+    # lados passam pelo mesmo formato de data antes de se encontrarem.
+    serie = serie.copy()
+    serie.index = _sem_fuso(serie.index)
+    alvo = _sem_fuso(datas_alvo)
+
+    unido = serie.index.union(alvo)
+    alinhado = serie.reindex(unido).ffill().reindex(alvo).ffill().bfill()
+    # De volta ao índice original: é ele que casa com a curva do ativo no gráfico.
+    alinhado.index = datas_alvo
     if alinhado.isna().all():
         return None, f"{nome}: sem sobreposição com o período"
 
@@ -187,7 +210,7 @@ def curva(nome: str, inicio, fim, datas_alvo, bruto=None):
     if origem.startswith("IPEA"):
         avisos.append(f"{nome} veio do {origem}")
     ultima = serie.index[-1]
-    if ultima < datas_alvo[-1] - pd.Timedelta(days=20):
+    if ultima < alvo[-1] - pd.Timedelta(days=20):
         avisos.append(f"{nome} vai até {ultima:%d/%m/%Y} (divulgação com defasagem)")
 
     return (alinhado / base - 1) * 100, "; ".join(avisos)
