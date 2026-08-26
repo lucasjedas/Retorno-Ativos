@@ -162,16 +162,6 @@ fim = col_fim.date_input(
     on_change=_soltar_atalho,
 )
 
-st.multiselect(
-    "Comparar com",
-    list(BENCHMARKS),
-    key="comparar",
-    placeholder="CDI, IPCA, Ibovespa, S&P 500...",
-    help="Desenha os índices escolhidos no mesmo gráfico, todos partindo de zero "
-         "na data inicial.",
-)
-comparar = st.session_state["comparar"]
-
 calcular_agora = st.button("Calcular", type="primary", width="stretch")
 
 # --------------------------------------------------------------------------
@@ -242,6 +232,17 @@ if calcular_agora or st.session_state.get("ja_calculou"):
     serie = m["serie"]
     if serie.index.tz is not None:
         serie = serie.tz_localize(None)
+
+    # Caixas de marcar em cima do gráfico: ticar redesenha na hora, sobre o
+    # mesmo período já calculado — a busca do ativo está em cache, então
+    # marcar e desmarcar não refaz a consulta das cotações.
+    st.caption("Comparar com")
+    caixas = st.columns(len(BENCHMARKS))
+    comparar = [
+        nome
+        for nome, coluna in zip(BENCHMARKS, caixas)
+        if coluna.checkbox(nome, key=f"comparar_{nome}")
+    ]
 
     rotulo_ativo = normalizar(ativo)
     colunas = {rotulo_ativo: (serie / serie.iloc[0] - 1) * 100}

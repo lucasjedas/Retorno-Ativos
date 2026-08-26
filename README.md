@@ -67,9 +67,10 @@ Yahoo também (`PETR4.SA`, `^GSPC`, `BRL=X`).
   A mensal aparece a partir de 7 dias de janela; a anual, a partir de ~1 mês.
 - Quanto R$ 1.000 investidos no início teriam virado no fim.
 - Máxima, mínima, queda máxima (drawdown), volatilidade anual, melhor e pior dia.
-- No app web: gráfico de linhas da curva de retorno, comparação com **CDI,
-  IPCA, Ibovespa e S&P 500** (todos partindo de zero na data inicial, com o
-  placar de quanto o ativo rendeu a mais ou a menos) e download do histórico
+- No app web: gráfico de linhas da curva de retorno, com caixas logo acima
+  dele para marcar **CDI, IPCA, Ibovespa e S&P 500** — o que estiver marcado
+  entra no gráfico no mesmo período, partindo de zero na data inicial, com o
+  placar de quanto o ativo rendeu a mais ou a menos. E download do histórico
   em CSV.
 
 ## De onde vêm os índices de comparação
