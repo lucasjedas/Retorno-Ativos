@@ -28,6 +28,13 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# Suba este número sempre que o formato devolvido pelas funções em cache
+# mudar. Ele entra na chave, e é o que impede o Streamlit de servir, depois
+# de um deploy, um resultado gravado no formato anterior — o corpo da função
+# em cache pode continuar idêntico enquanto o que ela devolve mudou.
+FORMATO_CACHE = 3
+
+
 VERDE = "#3A9E6E"   # ganho
 VERMELHO = "#C9483B"  # perda
 
@@ -72,7 +79,7 @@ class SemDados(Exception):
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def buscar(entrada: str, inicio: date, fim: date):
+def buscar(entrada: str, inicio: date, fim: date, formato: int = FORMATO_CACHE):
     """Mesma busca do programa de terminal, com cache de 30 minutos.
 
     A falha sai como exceção de propósito: o cache do Streamlit não guarda
@@ -91,7 +98,7 @@ def buscar(entrada: str, inicio: date, fim: date):
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def buscar_indice(nome: str, inicio: date, fim: date):
+def buscar_indice(nome: str, inicio: date, fim: date, formato: int = FORMATO_CACHE):
     """Série bruta do índice, guardada por 30 minutos.
 
     Sem isto, cada clique na tela refaria as quatro consultas de rede — o que
@@ -182,7 +189,7 @@ if calcular_agora or st.session_state.get("ja_calculou"):
 
     try:
         with st.spinner(f"Buscando {normalizar(ativo)}..."):
-            simbolo, df, moeda, nome = buscar(ativo, inicio, fim)
+            simbolo, df, moeda, nome = buscar(ativo, inicio, fim, FORMATO_CACHE)
     except SemDados as falha:
         st.error(f"Não encontrei dados para **{normalizar(ativo)}** nesse período.")
         dica = sugerir(ativo)
@@ -250,7 +257,7 @@ if calcular_agora or st.session_state.get("ja_calculou"):
                 try:
                     linha, recado = curva_indice(
                         nome, inicio, fim, serie.index,
-                        bruto=buscar_indice(nome, inicio, fim),
+                        bruto=buscar_indice(nome, inicio, fim, FORMATO_CACHE),
                     )
                 except Exception as erro:
                     falhas.append(

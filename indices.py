@@ -183,7 +183,15 @@ def curva(nome: str, inicio, fim, datas_alvo, bruto=None):
     fim do período (IPCA sai com defasagem) ou quando a fonte de reserva
     entrou no lugar da principal. Devolve (None, motivo) se nada respondeu.
     """
-    serie, origem, motivo = bruto if bruto is not None else fator(nome, inicio, fim)
+    # Um 'bruto' fora do formato esperado é entrada de cache gravada por uma
+    # versão anterior deste arquivo: o Streamlit guarda o resultado por chave
+    # de função e argumentos, e a função que chama esta aqui não mudou de
+    # corpo quando o formato do retorno mudou. Buscar de novo é mais barato
+    # que servir um dado que não dá para ler.
+    if bruto is not None and len(bruto) == 3:
+        serie, origem, motivo = bruto
+    else:
+        serie, origem, motivo = fator(nome, inicio, fim)
 
     if serie is None or serie.empty:
         return None, motivo or f"{nome}: sem dados no período"
