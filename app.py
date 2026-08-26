@@ -17,6 +17,7 @@ from financeiro import (
     dinheiro,
     pct,
 )
+from indices import BENCHMARKS, curva as curva_indice, fator as fator_indice
 from tickers import normalizar, sugerir
 
 st.set_page_config(
@@ -88,6 +89,16 @@ def buscar(entrada: str, inicio: date, fim: date):
     return simbolo, df, moeda, nome
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def buscar_indice(nome: str, inicio: date, fim: date):
+    """Série bruta do índice, guardada por 30 minutos.
+
+    Sem isto, cada clique na tela refaria as quatro consultas de rede — o que
+    é lento e ainda aumenta a chance de o Yahoo recusar o próximo pedido.
+    """
+    return fator_indice(nome, inicio, fim)
+
+
 # --------------------------------------------------------------------------
 # Entrada
 # --------------------------------------------------------------------------
@@ -98,9 +109,10 @@ hoje = _hoje_no_brasil()
 st.session_state.setdefault("data_inicio", hoje - timedelta(days=365))
 st.session_state.setdefault("data_fim", hoje)
 
+st.session_state.setdefault("ativo", "PETR4")
 ativo = st.text_input(
     "Ativo",
-    value="PETR4",
+    key="ativo",
     placeholder="PETR4, BOVA11, IBOV, AAPL, SPY, HGLG11, BTC...",
 ).strip()
 
@@ -123,6 +135,16 @@ fim = col_fim.date_input(
     "Fim", key="data_fim", format="DD/MM/YYYY",
     min_value=date(1960, 1, 1), max_value=hoje,
 )
+
+st.multiselect(
+    "Comparar com",
+    list(BENCHMARKS),
+    key="comparar",
+    placeholder="CDI, IPCA, Ibovespa, S&P 500...",
+    help="Desenha os índices escolhidos no mesmo gráfico, todos partindo de zero "
+         "na data inicial.",
+)
+comparar = st.session_state["comparar"]
 
 calcular_agora = st.button("Calcular", type="primary", width="stretch")
 
@@ -188,19 +210,67 @@ if calcular_agora or st.session_state.get("ja_calculou"):
         f"**{dinheiro(1000 * (1 + m['retorno_total']), cifra)}** no fim."
     )
 
-    # Curva do retorno acumulado — uma série só, por isso dispensa legenda.
+    # Curva do retorno acumulado, com os índices escolhidos no mesmo eixo.
     # O fuso sai da própria série: passar um 'index=' diferente do índice dela
     # faria o pandas realinhar pelos rótulos e devolver a coluna toda em NaN.
     serie = m["serie"]
     if serie.index.tz is not None:
         serie = serie.tz_localize(None)
-    curva = pd.DataFrame({"Retorno acumulado (%)": (serie / serie.iloc[0] - 1) * 100})
-    st.area_chart(
-        curva,
-        y="Retorno acumulado (%)",
-        color=VERDE if ganhou else VERMELHO,
-        height=260,
-    )
+
+    rotulo_ativo = normalizar(ativo)
+    colunas = {rotulo_ativo: (serie / serie.iloc[0] - 1) * 100}
+    cores = [VERDE if ganhou else VERMELHO]
+    avisos, falhas = [], []
+
+    if comparar:
+        with st.spinner("Buscando os índices..."):
+            for nome in comparar:
+                linha, recado = curva_indice(
+                    nome, inicio, fim, serie.index,
+                    serie_fator=buscar_indice(nome, inicio, fim),
+                )
+                if linha is None:
+                    falhas.append(recado)
+                    continue
+                colunas[nome] = linha
+                cores.append(BENCHMARKS[nome]["cor"])
+                if recado:
+                    avisos.append(recado)
+
+    st.line_chart(pd.DataFrame(colunas), color=cores, height=300)
+    st.caption("Retorno acumulado em %, todos partindo de zero na data inicial.")
+
+    if "S&P 500" in colunas and moeda == "BRL":
+        avisos.append(
+            "S&P 500 está em dólar e o ativo em real — a diferença entre as "
+            "duas curvas não inclui a variação do câmbio no período."
+        )
+
+    for recado in avisos:
+        st.caption(f"⚠️ {recado}")
+    if falhas:
+        st.caption("Não consegui buscar: " + "; ".join(falhas))
+
+    # Placar do período — só faz sentido quando há com quem comparar.
+    if len(colunas) > 1:
+        placar = pd.DataFrame(
+            [
+                {
+                    "": nome,
+                    "No período": pct(valores.iloc[-1] / 100),
+                    "Diferença": (
+                        "—" if nome == rotulo_ativo
+                        else pct((colunas[rotulo_ativo].iloc[-1] - valores.iloc[-1]) / 100)
+                    ),
+                }
+                for nome, valores in colunas.items()
+            ]
+        )
+        st.dataframe(placar, hide_index=True, width="stretch")
+        st.caption(
+            f"“Diferença” é quanto **{rotulo_ativo}** rendeu a mais (ou a menos) "
+            f"que o índice, em pontos percentuais."
+        )
 
     if m["tem_proventos"]:
         st.info(

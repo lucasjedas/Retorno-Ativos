@@ -67,7 +67,24 @@ Yahoo também (`PETR4.SA`, `^GSPC`, `BRL=X`).
   A mensal aparece a partir de 7 dias de janela; a anual, a partir de ~1 mês.
 - Quanto R$ 1.000 investidos no início teriam virado no fim.
 - Máxima, mínima, queda máxima (drawdown), volatilidade anual, melhor e pior dia.
-- No app web: gráfico da curva de retorno e download do histórico em CSV.
+- No app web: gráfico de linhas da curva de retorno, comparação com **CDI,
+  IPCA, Ibovespa e S&P 500** (todos partindo de zero na data inicial, com o
+  placar de quanto o ativo rendeu a mais ou a menos) e download do histórico
+  em CSV.
+
+## De onde vêm os índices de comparação
+
+| Índice | Fonte |
+|---|---|
+| CDI | Banco Central — série 12 do SGS (taxa diária, acumulada no período) |
+| IPCA | Banco Central — série 433 do SGS (variação mensal) |
+| Ibovespa | Yahoo Finance (`^BVSP`) |
+| S&P 500 | Yahoo Finance (`^GSPC`) |
+
+O IPCA é mensal e sai com cerca de dez dias de defasagem, então a curva dele
+termina antes do fim do período — o app avisa na tela até que data ela vai.
+Comparar um ativo em real com o S&P 500 ignora a variação do câmbio; nesse
+caso o app também avisa.
 
 ## Observações
 
@@ -87,6 +104,7 @@ Yahoo também (`PETR4.SA`, `^GSPC`, `BRL=X`).
 | `app.py` | App web (Streamlit) |
 | `financeiro.py` | Busca das cotações e cálculo — compartilhado pelos dois |
 | `tickers.py` | Traduz o que você digita para o código do Yahoo Finance |
+| `indices.py` | Curvas de CDI, IPCA, Ibovespa e S&P 500 para comparação |
 | `Retorno_Acumulado_Ativos_COLAB.ipynb` | Notebook do Google Colab |
 | `GUIA-CELULAR.md` | Como publicar e usar no celular |
 | `rodar.sh` / `web.sh` | Atalhos para rodar o terminal / o app web |
