@@ -3,6 +3,8 @@
 Digite o ativo, a data de início e a data de fim — o programa devolve o retorno
 acumulado do período, com dados do **Yahoo Finance**.
 
+**No ar em: <https://retorno-ativos-7bct3huejyy3teaxs8tfec.streamlit.app>**
+
 Vem em três formatos: terminal, app web (feito para o celular) e notebook do
 Google Colab.
 
@@ -25,8 +27,12 @@ Ele abre o navegador em `http://localhost:8501`. Para parar, `Ctrl+C` no termina
 
 ## No celular
 
-Veja **[GUIA-CELULAR.md](GUIA-CELULAR.md)** — passo a passo para publicar o app
-numa URL fixa (gratuito, via Streamlit Cloud) ou usar o notebook do Colab.
+Abra <https://retorno-ativos-7bct3huejyy3teaxs8tfec.streamlit.app> e adicione à tela inicial
+(iPhone/Safari: compartilhar → *Adicionar à Tela de Início*; Android/Chrome:
+menu ⋮ → *Adicionar à tela inicial*). Fica com cara de aplicativo.
+
+O **[GUIA-CELULAR.md](GUIA-CELULAR.md)** guarda o passo a passo da publicação
+e a alternativa pelo Google Colab.
 
 ## O que ele aceita
 

@@ -131,11 +131,12 @@ if calcular_agora or st.session_state.get("ja_calculou"):
     )
 
     # Curva do retorno acumulado — uma série só, por isso dispensa legenda.
+    # O fuso sai da própria série: passar um 'index=' diferente do índice dela
+    # faria o pandas realinhar pelos rótulos e devolver a coluna toda em NaN.
     serie = m["serie"]
-    curva = pd.DataFrame(
-        {"Retorno acumulado (%)": (serie / serie.iloc[0] - 1) * 100},
-        index=serie.index.tz_localize(None) if serie.index.tz is not None else serie.index,
-    )
+    if serie.index.tz is not None:
+        serie = serie.tz_localize(None)
+    curva = pd.DataFrame({"Retorno acumulado (%)": (serie / serie.iloc[0] - 1) * 100})
     st.area_chart(
         curva,
         y="Retorno acumulado (%)",
