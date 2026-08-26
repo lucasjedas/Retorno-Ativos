@@ -74,12 +74,17 @@ Yahoo também (`PETR4.SA`, `^GSPC`, `BRL=X`).
 
 ## De onde vêm os índices de comparação
 
-| Índice | Fonte |
-|---|---|
-| CDI | Banco Central — série 12 do SGS (taxa diária, acumulada no período) |
-| IPCA | Banco Central — série 433 do SGS (variação mensal) |
-| Ibovespa | Yahoo Finance (`^BVSP`) |
-| S&P 500 | Yahoo Finance (`^GSPC`) |
+| Índice | Fonte | Reserva |
+|---|---|---|
+| CDI | Banco Central — série 12 do SGS (diária) | IPEA Data `BM12_TJCDI12` (mensal) |
+| IPCA | Banco Central — série 433 do SGS (mensal) | IPEA Data `PRECOS12_IPCAG12` |
+| Ibovespa | Yahoo Finance (`^BVSP`) | — |
+| S&P 500 | Yahoo Finance (`^GSPC`) | — |
+
+O WAF do Banco Central responde **HTTP 406** a pedidos vindos de servidores em
+nuvem: da sua máquina a API abre normalmente, do Streamlit Cloud não. Por isso
+o CDI e o IPCA caem para o IPEA Data quando o BCB recusa — a curva fica em
+degraus mensais e o app avisa na tela que a reserva entrou.
 
 O IPCA é mensal e sai com cerca de dez dias de defasagem, então a curva dele
 termina antes do fim do período — o app avisa na tela até que data ela vai.

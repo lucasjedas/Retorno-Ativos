@@ -1,8 +1,17 @@
 """Índices de comparação para o gráfico: CDI, IPCA, Ibovespa e S&P 500.
 
-CDI e IPCA não existem no Yahoo Finance — vêm do SGS, a API pública de séries
-temporais do Banco Central. Ibovespa e S&P 500 reaproveitam a busca do
-financeiro.py.
+Ibovespa e S&P 500 saem do Yahoo, pela mesma busca do financeiro.py.
+
+CDI e IPCA não existem no Yahoo e vêm de duas fontes públicas, em cascata:
+
+1. SGS, do Banco Central — séries diárias, é o dado preferido;
+2. IPEA Data — as mesmas taxas em base mensal.
+
+A cascata existe porque o WAF do Banco Central responde 406 a pedidos vindos
+de servidores em nuvem: da máquina de casa a API abre normalmente, do
+Streamlit Cloud não. O IPEA atende os dois. Quando a segunda fonte é usada, a
+tela diz — a curva fica em degraus mensais e o acumulado muda um pouco, já
+que meses inteiros entram no lugar das datas exatas.
 
 Toda curva devolvida aqui é retorno acumulado em %, começando em zero na
 primeira data do ativo, para poder ser desenhada no mesmo eixo.
@@ -10,112 +19,163 @@ primeira data do ativo, para poder ser desenhada no mesmo eixo.
 
 import json
 import urllib.request
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pandas as pd
 
 from financeiro import buscar_historico
 
 SGS = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}/dados"
+IPEA = "https://www.ipeadata.gov.br/api/odata4/ValoresSerie(SERCODIGO='{codigo}')"
+ESPERA = 15  # segundos; tela parada esperando fonte fora do ar não ajuda
+
+CABECALHOS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+}
 
 # Ordem aqui é a ordem da legenda e das cores no gráfico.
 BENCHMARKS = {
-    "CDI":       {"fonte": "bcb",    "serie": 12,  "cor": "#7E8CA0"},
-    "IPCA":      {"fonte": "bcb",    "serie": 433, "cor": "#C79A3C"},
-    "Ibovespa":  {"fonte": "yahoo",  "simbolo": "^BVSP", "cor": "#4B7BE5"},
-    "S&P 500":   {"fonte": "yahoo",  "simbolo": "^GSPC", "cor": "#9B59B6"},
+    "CDI":      {"fonte": "taxa",  "sgs": 12,  "ipea": "BM12_TJCDI12",    "cor": "#7E8CA0"},
+    "IPCA":     {"fonte": "taxa",  "sgs": 433, "ipea": "PRECOS12_IPCAG12", "cor": "#C79A3C"},
+    "Ibovespa": {"fonte": "yahoo", "simbolo": "^BVSP", "cor": "#4B7BE5"},
+    "S&P 500":  {"fonte": "yahoo", "simbolo": "^GSPC", "cor": "#9B59B6"},
 }
 
 
-def _sgs(serie: int, inicio, fim):
-    """Baixa uma série do Banco Central. Devolve Series (data -> valor %)."""
+def _baixar(url: str):
+    pedido = urllib.request.Request(url, headers=CABECALHOS)
+    with urllib.request.urlopen(pedido, timeout=ESPERA) as resposta:
+        return json.loads(resposta.read().decode("utf-8"))
+
+
+def _taxas_sgs(serie: int, inicio, fim):
+    """Série de variações % do Banco Central (diária, no caso do CDI)."""
     url = SGS.format(serie=serie) + (
         f"?formato=json&dataInicial={inicio:%d/%m/%Y}&dataFinal={fim:%d/%m/%Y}"
     )
-    pedido = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(pedido, timeout=15) as resposta:
-        dados = json.loads(resposta.read().decode("utf-8"))
-
+    dados = _baixar(url)
     if not dados:
         return None
     datas = pd.to_datetime([x["data"] for x in dados], format="%d/%m/%Y")
-    valores = [float(x["valor"]) for x in dados]
-    return pd.Series(valores, index=datas).sort_index()
+    return pd.Series([float(x["valor"]) for x in dados], index=datas).sort_index()
 
 
-def _fator_bcb(serie: int, inicio, fim):
-    """Fator acumulado de uma série de variações percentuais do BCB.
+def _taxas_ipea(codigo: str, inicio, fim):
+    """Série de variações % mensais do IPEA Data.
 
-    A margem para trás existe por causa do IPCA: ele é mensal e vem datado no
-    dia 1º, então sem folga o mês em que o período começa ficaria de fora.
+    O OData devolve a série inteira (desde os anos 80), então o recorte é
+    feito aqui mesmo — são poucas centenas de pontos.
     """
-    taxas = _sgs(serie, inicio - timedelta(days=45), fim)
-    if taxas is None or taxas.empty:
+    dados = _baixar(IPEA.format(codigo=codigo))["value"]
+    if not dados:
         return None
-    return (1 + taxas / 100).cumprod()
+    pares = {
+        pd.to_datetime(x["VALDATA"]).tz_localize(None).normalize(): x["VALVALOR"]
+        for x in dados
+        if x.get("VALVALOR") is not None
+    }
+    serie = pd.Series(pares).sort_index()
+    # Margem para trás: as taxas são datadas no dia 1º, então sem folga o mês
+    # em que o período começa ficaria de fora.
+    return serie[str(inicio - timedelta(days=45)):str(fim)]
+
+
+def _conferir_variacoes(taxas, nome: str):
+    """Recusa série que não seja variação percentual.
+
+    O IPEA publica o IPCA nas duas formas, e os códigos diferem por uma letra:
+    PRECOS12_IPCAG12 é a variação mensal, PRECOS12_IPCA12 é o número índice
+    (na casa dos 7.600). Compor 7.600 como se fosse "+7.600% no mês" produz um
+    acumulado de 10²² por cento — grande demais para passar despercebido, mas
+    o formato do erro é o de um dado plausível, então fica esta trava.
+    """
+    if taxas is None or taxas.empty:
+        return taxas
+    extremo = float(taxas.abs().max())
+    if extremo > 50:
+        raise RuntimeError(
+            f"{nome}: a série não parece variação percentual "
+            f"(valor de {extremo:.1f} no período)"
+        )
+    return taxas
+
+
+def _fator_taxa(config, inicio, fim):
+    """Fator acumulado de CDI/IPCA, com a fonte de reserva. -> (Series, origem)."""
+    nome = config["ipea"]
+    try:
+        taxas = _conferir_variacoes(
+            _taxas_sgs(config["sgs"], inicio - timedelta(days=45), fim), nome
+        )
+        if taxas is not None and not taxas.empty:
+            return (1 + taxas / 100).cumprod(), "Banco Central"
+        falha_bcb = "resposta vazia"
+    except Exception as erro:
+        falha_bcb = f"{type(erro).__name__}: {erro}"
+
+    taxas = _conferir_variacoes(_taxas_ipea(nome, inicio, fim), nome)
+    if taxas is None or taxas.empty:
+        raise RuntimeError(f"Banco Central ({falha_bcb}) e IPEA sem dados")
+    return (1 + taxas / 100).cumprod(), f"IPEA (mensal) — Banco Central recusou: {falha_bcb}"
 
 
 def _fator_yahoo(simbolo: str, inicio, fim):
-    """Fator acumulado de um índice do Yahoo (preço normalizado)."""
-    from datetime import datetime
-
     _, df, _, _ = buscar_historico(
         simbolo,
         datetime.combine(inicio, datetime.min.time()),
         datetime.combine(fim, datetime.min.time()),
     )
     if df is None:
-        return None
+        return None, "Yahoo Finance"
     coluna = "Adj Close" if "Adj Close" in df.columns else "Close"
     serie = df[coluna].dropna()
     if serie.index.tz is not None:
         serie = serie.tz_localize(None)
-    return serie
+    return serie, "Yahoo Finance"
 
 
 def fator(nome: str, inicio, fim):
-    """Baixa a série bruta do índice. Devolve (Series, "") ou (None, motivo).
+    """Série bruta do índice. -> (Series, origem, motivo da falha).
 
-    Separado do alinhamento de propósito: só isto depende da rede, então é o
-    que vale a pena guardar em cache. O motivo da falha vem junto porque um
-    índice mudo na tela não diz se a fonte caiu, recusou o pedido ou apenas
-    não tem dado para o período.
+    Só isto depende da rede, então é o que vale a pena guardar em cache — o
+    alinhamento muda a cada ativo. O motivo vem junto porque um índice mudo
+    na tela não diz se a fonte caiu, recusou o pedido ou não tem o período.
     """
     config = BENCHMARKS[nome]
     try:
-        if config["fonte"] == "bcb":
-            serie = _fator_bcb(config["serie"], inicio, fim)
+        if config["fonte"] == "taxa":
+            serie, origem = _fator_taxa(config, inicio, fim)
         else:
-            serie = _fator_yahoo(config["simbolo"], inicio, fim)
+            serie, origem = _fator_yahoo(config["simbolo"], inicio, fim)
     except Exception as erro:
-        return None, f"{nome}: {type(erro).__name__}: {erro}"
+        return None, "", f"{nome}: {type(erro).__name__}: {erro}"
 
     if serie is None or serie.empty:
-        return None, f"{nome}: a fonte respondeu sem dados para o período"
-    return serie, ""
+        return None, origem, f"{nome}: a fonte respondeu sem dados para o período"
+    return serie, origem, ""
 
 
-def curva(nome: str, inicio, fim, datas_alvo, serie_fator=None):
-    # serie_fator, quando vem, é a tupla (Series, motivo) devolvida por fator().
+def curva(nome: str, inicio, fim, datas_alvo, bruto=None):
     """Retorno acumulado em %, alinhado às datas de pregão do ativo.
 
-    Devolve (Series, aviso) — o aviso conta quando a série termina antes do
-    fim do período, como acontece com o IPCA, divulgado com defasagem.
-    Devolve (None, motivo) se a fonte não respondeu.
+    Devolve (Series, aviso) — o aviso conta quando a curva termina antes do
+    fim do período (IPCA sai com defasagem) ou quando a fonte de reserva
+    entrou no lugar da principal. Devolve (None, motivo) se nada respondeu.
     """
-    if serie_fator is None:
-        serie, motivo = fator(nome, inicio, fim)
-    else:
-        serie, motivo = serie_fator
+    serie, origem, motivo = bruto if bruto is not None else fator(nome, inicio, fim)
 
     if serie is None or serie.empty:
         return None, motivo or f"{nome}: sem dados no período"
 
     # Alinha ao calendário do ativo: repete o último valor conhecido nos dias
-    # sem cotação (fim de semana, feriado, mês do IPCA ainda não divulgado).
+    # sem cotação (fim de semana, feriado, mês ainda não divulgado).
     unido = serie.index.union(datas_alvo)
-    alinhado = serie.reindex(unido).ffill().reindex(datas_alvo)
-    alinhado = alinhado.ffill().bfill()
+    alinhado = serie.reindex(unido).ffill().reindex(datas_alvo).ffill().bfill()
     if alinhado.isna().all():
         return None, f"{nome}: sem sobreposição com o período"
 
@@ -123,9 +183,11 @@ def curva(nome: str, inicio, fim, datas_alvo, serie_fator=None):
     if not base or pd.isna(base):
         return None, f"{nome}: série inconsistente"
 
-    aviso = ""
+    avisos = []
+    if origem.startswith("IPEA"):
+        avisos.append(f"{nome} veio do {origem}")
     ultima = serie.index[-1]
     if ultima < datas_alvo[-1] - pd.Timedelta(days=20):
-        aviso = f"{nome} vai até {ultima:%d/%m/%Y} (divulgação com defasagem)"
+        avisos.append(f"{nome} vai até {ultima:%d/%m/%Y} (divulgação com defasagem)")
 
-    return (alinhado / base - 1) * 100, aviso
+    return (alinhado / base - 1) * 100, "; ".join(avisos)

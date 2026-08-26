@@ -245,7 +245,7 @@ if calcular_agora or st.session_state.get("ja_calculou"):
             for nome in comparar:
                 linha, recado = curva_indice(
                     nome, inicio, fim, serie.index,
-                    serie_fator=buscar_indice(nome, inicio, fim),
+                    bruto=buscar_indice(nome, inicio, fim),
                 )
                 if linha is None:
                     falhas.append((nome, recado))
