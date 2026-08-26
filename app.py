@@ -44,6 +44,15 @@ def _hoje_no_brasil() -> date:
         return date.today()
 
 
+def taxa(valor, sufixo):
+    """Formata uma taxa equivalente; '—' quando o período é curto demais."""
+    return f"{pct(valor)} {sufixo}" if valor is not None else "—"
+
+
+def meses_br(meses: float) -> str:
+    return "1 mês" if round(meses) == 1 else f"{meses:.1f} meses".replace(".", ",")
+
+
 PERIODOS = {
     "1 ano": 365,
     "3 anos": 365 * 3,
@@ -161,10 +170,18 @@ if calcular_agora or st.session_state.get("ja_calculou"):
         f"{m['pregoes']} pregões"
     )
 
-    a, b, c = st.columns(3)
+    a, b = st.columns(2)
     a.metric("Retorno acumulado", pct(m["retorno_total"]))
-    b.metric("Anualizado", pct(m["anualizado"]) + " a.a." if m["anualizado"] is not None else "—")
-    c.metric("Queda máxima", pct(m["drawdown"]))
+    b.metric("Queda máxima", pct(m["drawdown"]))
+
+    c, d = st.columns(2)
+    c.metric("Retorno médio mensal", taxa(m["mensal"], "a.m."))
+    d.metric("Retorno médio anual", taxa(m["anualizado"], "a.a."))
+    st.caption(
+        f"Taxas equivalentes por juros compostos: aplicadas mês a mês "
+        f"(ou ano a ano) ao longo dos {meses_br(m['meses'])} do período, "
+        f"chegam ao mesmo retorno acumulado acima."
+    )
 
     st.markdown(
         f"**{dinheiro(1000, cifra)}** investidos no início virariam "
@@ -198,6 +215,7 @@ if calcular_agora or st.session_state.get("ja_calculou"):
             ("Máxima no período", dinheiro(m["maxima"], cifra)),
             ("Mínima no período", dinheiro(m["minima"], cifra)),
         ]
+        linhas.append(("Prazo do período", f"{meses_br(m['meses'])} ({m['anos']:.2f} anos)".replace(".", ",")))
         if m["volatilidade"] is not None:
             linhas.append(("Volatilidade anual", pct(m["volatilidade"], sinal=False)))
         if m["melhor_dia"]:

@@ -59,8 +59,13 @@ def exibir(entrada, simbolo, nome, moeda, m):
     if m["tem_proventos"]:
         print(f"     · só variação de preço ....... {pct(m['retorno_preco'])}")
         print(f"     · com proventos reinvestidos . {pct(m['retorno_total'])}")
+    if m["mensal"] is not None:
+        print(f"  Retorno médio mensal .. {pct(m['mensal'])} a.m.")
     if m["anualizado"] is not None:
-        print(f"  Retorno anualizado .... {pct(m['anualizado'])} a.a.")
+        print(f"  Retorno médio anual ... {pct(m['anualizado'])} a.a.")
+    if m["mensal"] is not None or m["anualizado"] is not None:
+        print("     · taxas equivalentes: compostas ao longo do período,")
+        print("       chegam ao mesmo retorno acumulado acima.")
     print()
     valor_final = 1000 * (1 + m["retorno_total"])
     print(f"  {dinheiro(1000, cifra)} investidos virariam {dinheiro(valor_final, cifra)}")

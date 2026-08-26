@@ -60,7 +60,11 @@ Yahoo também (`PETR4.SA`, `^GSPC`, `BRL=X`).
 - **Retorno acumulado** — considerando dividendos/proventos reinvestidos
   (usa o preço ajustado). Quando o ativo pagou proventos, o programa mostra
   também o retorno só de variação de preço, para comparar.
-- Retorno anualizado (a.a.), quando o período passa de ~1 mês.
+- **Retorno médio mensal (a.m.) e anual (a.a.)** — taxas equivalentes por
+  juros compostos: são a taxa que, aplicada mês a mês (ou ano a ano) ao longo
+  do período, chega exatamente ao retorno acumulado. Não é o acumulado
+  dividido pelo número de meses, que ignoraria os juros sobre juros.
+  A mensal aparece a partir de 7 dias de janela; a anual, a partir de ~1 mês.
 - Quanto R$ 1.000 investidos no início teriam virado no fim.
 - Máxima, mínima, queda máxima (drawdown), volatilidade anual, melhor e pior dia.
 - No app web: gráfico da curva de retorno e download do histórico em CSV.

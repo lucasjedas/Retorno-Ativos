@@ -130,8 +130,24 @@ def calcular(df):
     dias = max((data_fim - data_ini).days, 1)
     anos = dias / 365.25
 
-    # Retorno anualizado só faz sentido a partir de ~1 mês de janela.
-    anualizado = (1 + retorno_total) ** (1 / anos) - 1 if anos >= 0.08 else None
+    # Taxas equivalentes por juros compostos: a taxa que, repetida a cada
+    # mês (ou ano) do período, chega exatamente ao mesmo retorno acumulado.
+    # Não é o retorno acumulado dividido pelo número de meses — isso ignoraria
+    # o efeito dos juros sobre juros.
+    meses = anos * 12
+    perda_total = retorno_total <= -1  # (1+r)^x não existe para r <= -1
+
+    # Anualizar só faz sentido a partir de ~1 mês de janela; abaixo disso a
+    # extrapolação (36x ou mais) diria mais sobre o ruído do que sobre o ativo.
+    anualizado = (
+        (1 + retorno_total) ** (1 / anos) - 1
+        if anos >= 0.08 and not perda_total else None
+    )
+    # A taxa mensal extrapola bem menos, então aceita janelas mais curtas.
+    mensal = (
+        (1 + retorno_total) ** (1 / meses) - 1
+        if dias >= 7 and not perda_total else None
+    )
 
     drawdown = float((serie_total / serie_total.cummax() - 1).min())
 
@@ -153,7 +169,10 @@ def calcular(df):
         "retorno_total": retorno_total,
         "retorno_preco": retorno_preco,
         "tem_proventos": coluna_total == "Adj Close" and abs(retorno_total - retorno_preco) > 1e-6,
-        "anualizado": anualizado,
+        "anualizado": anualizado,   # taxa média anual (equivalente composta)
+        "mensal": mensal,           # taxa média mensal (equivalente composta)
+        "meses": meses,
+        "anos": anos,
         "drawdown": drawdown,
         "volatilidade": volatilidade,
         "pregoes": len(serie_total),
