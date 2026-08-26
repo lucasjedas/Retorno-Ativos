@@ -116,10 +116,26 @@ ativo = st.text_input(
     placeholder="PETR4, BOVA11, IBOV, AAPL, SPY, HGLG11, BTC...",
 ).strip()
 
-atalho = st.segmented_control(
-    "Período rápido", list(PERIODOS) + ["No ano"], default=None, key="atalho"
+def _soltar_atalho():
+    """Mexer numa data na mão desmarca o período rápido.
+
+    Sem isto o botão continuaria aceso mostrando um período que não é mais o
+    que está nos campos.
+    """
+    st.session_state["atalho"] = None
+    st.session_state["atalho_aplicado"] = None
+
+
+st.segmented_control(
+    "Período rápido", list(PERIODOS) + ["No ano"], key="atalho"
 )
-if atalho:
+atalho = st.session_state.get("atalho")
+
+# Aplicar só quando a escolha muda. Regravar a cada execução desfazia
+# qualquer ajuste manual nas datas: bastava recalcular para o período voltar
+# ao do botão que continuava selecionado.
+if atalho and atalho != st.session_state.get("atalho_aplicado"):
+    st.session_state["atalho_aplicado"] = atalho
     st.session_state["data_fim"] = hoje
     st.session_state["data_inicio"] = (
         date(hoje.year, 1, 1) if atalho == "No ano"
@@ -130,10 +146,12 @@ col_ini, col_fim = st.columns(2)
 inicio = col_ini.date_input(
     "Início", key="data_inicio", format="DD/MM/YYYY",
     min_value=date(1960, 1, 1), max_value=hoje,
+    on_change=_soltar_atalho,
 )
 fim = col_fim.date_input(
     "Fim", key="data_fim", format="DD/MM/YYYY",
     min_value=date(1960, 1, 1), max_value=hoje,
+    on_change=_soltar_atalho,
 )
 
 st.multiselect(
