@@ -7,6 +7,7 @@ Módulo compartilhado pelo programa de terminal (main.py) e pelo app web
 import contextlib
 import io
 import logging
+import time
 import warnings
 from datetime import datetime, timedelta
 
@@ -40,32 +41,57 @@ def ler_data(texto: str):
     return None
 
 
-def buscar_historico(entrada: str, inicio: datetime, fim: datetime):
+TENTATIVAS = 3          # o Yahoo recusa pedidos em rajada; vale insistir
+ESPERA_ENTRE = 1.5      # segundos, dobrando a cada nova tentativa
+
+
+def buscar_historico(entrada: str, inicio: datetime, fim: datetime, diagnostico=None):
     """Tenta cada símbolo candidato até achar dados no período.
 
     Retorna (simbolo, DataFrame, moeda, nome) ou (None, None, None, None).
+
+    'diagnostico', se for uma lista, recebe uma linha por tentativa frustrada.
+    Sem isso a falha fica muda: o Yahoo costuma recusar pedidos vindos de
+    servidores em nuvem, e sem o motivo registrado não dá para distinguir
+    isso de um código de ativo inexistente.
     """
     # O Yahoo trata 'end' como exclusivo: soma 1 dia para incluir a data final.
     fim_exclusivo = fim + timedelta(days=1)
 
+    def anotar(texto):
+        if diagnostico is not None:
+            diagnostico.append(texto)
+
     for simbolo in candidatos(entrada):
-        try:
-            with sem_ruido():
-                papel = yf.Ticker(simbolo)
-                df = papel.history(
-                    start=inicio.strftime("%Y-%m-%d"),
-                    end=fim_exclusivo.strftime("%Y-%m-%d"),
-                    auto_adjust=False,
-                    actions=False,
-                )
-        except Exception:
-            continue
+        df = None
+        for tentativa in range(1, TENTATIVAS + 1):
+            try:
+                with sem_ruido():
+                    papel = yf.Ticker(simbolo)
+                    df = papel.history(
+                        start=inicio.strftime("%Y-%m-%d"),
+                        end=fim_exclusivo.strftime("%Y-%m-%d"),
+                        auto_adjust=False,
+                        actions=False,
+                    )
+            except Exception as erro:
+                anotar(f"{simbolo} (tentativa {tentativa}): {type(erro).__name__}: {erro}")
+                df = None
+            else:
+                if df is not None and not df.empty:
+                    break
+                anotar(f"{simbolo} (tentativa {tentativa}): resposta vazia")
+                df = None
+
+            if tentativa < TENTATIVAS:
+                time.sleep(ESPERA_ENTRE * tentativa)
 
         if df is None or df.empty or "Close" not in df.columns:
             continue
 
         df = df.dropna(subset=["Close"])
         if len(df) < 2:
+            anotar(f"{simbolo}: só {len(df)} pregão(ões) no período")
             continue
 
         moeda, nome = "", simbolo

@@ -29,6 +29,21 @@ st.set_page_config(
 VERDE = "#3A9E6E"   # ganho
 VERMELHO = "#C9483B"  # perda
 
+def _hoje_no_brasil() -> date:
+    """Data de hoje em Brasília.
+
+    O servidor do Streamlit Cloud roda em UTC: depois das 21h daqui, um
+    date.today() cru já virou o dia seguinte e o app oferecia uma data
+    'de hoje' que ainda não teve pregão.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    except Exception:
+        return date.today()
+
+
 PERIODOS = {
     "1 ano": 365,
     "3 anos": 365 * 3,
@@ -37,13 +52,30 @@ PERIODOS = {
 }
 
 
+class SemDados(Exception):
+    """Nenhum candidato devolveu histórico. Carrega o porquê de cada tentativa."""
+
+    def __init__(self, motivos):
+        super().__init__("sem dados")
+        self.motivos = motivos
+
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def buscar(entrada: str, inicio: date, fim: date):
-    """Mesma busca do programa de terminal, com cache de 30 minutos."""
+    """Mesma busca do programa de terminal, com cache de 30 minutos.
+
+    A falha sai como exceção de propósito: o cache do Streamlit não guarda
+    chamadas que levantam erro, e uma recusa passageira do Yahoo não deve
+    ficar 30 minutos grudada na tela.
+    """
+    motivos = []
     simbolo, df, moeda, nome = buscar_historico(
         entrada, datetime.combine(inicio, datetime.min.time()),
         datetime.combine(fim, datetime.min.time()),
+        diagnostico=motivos,
     )
+    if df is None:
+        raise SemDados(motivos)
     return simbolo, df, moeda, nome
 
 
@@ -53,7 +85,7 @@ def buscar(entrada: str, inicio: date, fim: date):
 st.title("📈 Retorno acumulado")
 st.caption("Ações, ETFs, FIIs, BDRs, índices (BR/EUA), câmbio e cripto · dados do Yahoo Finance")
 
-hoje = date.today()
+hoje = _hoje_no_brasil()
 st.session_state.setdefault("data_inicio", hoje - timedelta(days=365))
 st.session_state.setdefault("data_fim", hoje)
 
@@ -98,15 +130,24 @@ if calcular_agora or st.session_state.get("ja_calculou"):
         st.warning("A data de início precisa ser anterior à data de fim.")
         st.stop()
 
-    with st.spinner(f"Buscando {normalizar(ativo)}..."):
-        simbolo, df, moeda, nome = buscar(ativo, inicio, fim)
-
-    if df is None:
+    try:
+        with st.spinner(f"Buscando {normalizar(ativo)}..."):
+            simbolo, df, moeda, nome = buscar(ativo, inicio, fim)
+    except SemDados as falha:
         st.error(f"Não encontrei dados para **{normalizar(ativo)}** nesse período.")
         dica = sugerir(ativo)
         if dica:
             st.info(f"Você quis dizer: {dica}?")
         st.caption("Exemplos: PETR4, BOVA11, IBOV, AAPL, SPY, SP500, HGLG11, BTC")
+        if st.button("Tentar de novo"):
+            st.rerun()
+        with st.expander("Detalhes técnicos"):
+            st.caption(
+                "Se aparecer 'Too Many Requests' ou 'rate limit', é o Yahoo "
+                "recusando pedidos vindos do servidor — costuma passar em alguns "
+                "minutos. O app já tenta 3 vezes antes de desistir."
+            )
+            st.code("\n".join(falha.motivos) or "sem detalhes", language="text")
         st.stop()
 
     m = calcular(df)
