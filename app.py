@@ -259,7 +259,7 @@ if calcular_agora or st.session_state.get("ja_calculou"):
     st.subheader(nome)
     st.caption(
         f"{simbolo} · {data_br(m['data_ini'])} → {data_br(m['data_fim'])} · "
-        f"{m['pregoes']} pregões"
+        f"{m['pregoes']} {m['cadencia']}"
     )
 
     a, b = st.columns(2)

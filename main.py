@@ -49,7 +49,7 @@ def exibir(entrada, simbolo, nome, moeda, m):
     titulo = nome if nome and nome != simbolo else normalizar(entrada)
     print(f"  {titulo}")
     print(f"  {simbolo}  ·  {data_br(m['data_ini'])} → {data_br(m['data_fim'])}"
-          f"  ·  {m['pregoes']} pregões")
+          f"  ·  {m['pregoes']} {m['cadencia']}")
     print("=" * largura)
     print()
     print(f"  Preço inicial ......... {dinheiro(m['preco_ini'], cifra)}")

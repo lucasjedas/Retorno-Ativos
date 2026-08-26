@@ -16,7 +16,10 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
 import yfinance as yf  # noqa: E402  (depois do filtro de warnings, de propósito)
 
-from tickers import candidatos
+import pandas as pd
+
+import macro as series_macro
+from tickers import candidatos, macro_de
 
 FORMATOS_DATA = ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y")
 SIMBOLO_MOEDA = {"BRL": "R$", "USD": "US$", "EUR": "€", "GBP": "£", "JPY": "¥"}
@@ -61,6 +64,22 @@ def buscar_historico(entrada: str, inicio: datetime, fim: datetime, diagnostico=
     def anotar(texto):
         if diagnostico is not None:
             diagnostico.append(texto)
+
+    # CDI, IPCA e CPI não são ativos negociados: vêm de fonte própria, como
+    # número índice. Daqui para baixo tudo trata a série igual a um preço.
+    nome_macro = macro_de(entrada)
+    if nome_macro:
+        try:
+            serie, origem = series_macro.nivel(nome_macro, inicio, fim)
+        except Exception as erro:
+            anotar(f"{nome_macro}: {type(erro).__name__}: {erro}")
+            return None, None, None, None
+        if serie is None or len(serie) < 2:
+            anotar(f"{nome_macro}: menos de duas leituras no período")
+            return None, None, None, None
+        df = pd.DataFrame({"Close": serie, "Adj Close": serie})
+        descricao = series_macro.SERIES[nome_macro]["nome"]
+        return nome_macro, df, "", f"{descricao} · fonte: {origem}"
 
     for simbolo in candidatos(entrada):
         df = None
@@ -161,7 +180,13 @@ def calcular(df):
         melhor_dia = (variacao_diaria.idxmax().to_pydatetime(), float(variacao_diaria.max()))
         pior_dia = (variacao_diaria.idxmin().to_pydatetime(), float(variacao_diaria.min()))
 
+    # IPCA e CPI têm uma leitura por mês; chamar isso de "pregão" seria dizer
+    # que três anos de IPCA tiveram 37 dias de negociação.
+    intervalo = serie_total.index.to_series().diff().dt.days.median()
+    cadencia = "leituras mensais" if intervalo and intervalo > 20 else "pregões"
+
     return {
+        "cadencia": cadencia,
         "data_ini": data_ini,
         "data_fim": data_fim,
         "preco_ini": inicio_preco,

@@ -48,6 +48,12 @@ e a alternativa pelo Google Colab.
 | Câmbio | `DOLAR`, `EURBRL`, `EURUSD` |
 | Commodities | `OURO`, `PETROLEO` |
 | Cripto | `BTC`, `ETH` |
+| Indicadores | `CDI`, `IPCA`, `CPI` (inflação dos EUA) |
+
+`CDI`, `IPCA` e `CPI` não são ativos negociados e não existem no Yahoo — vêm
+das fontes oficiais e são tratados como número índice, então rendem as mesmas
+medidas dos demais (retorno acumulado, taxas médias, gráfico). Aceitam também
+`DI`, `inflação` e `inflacaoEUA`.
 
 Não precisa saber o sufixo do Yahoo: digitando `PETR4` ele testa `PETR4.SA`,
 digitando `IBOV` ele usa `^BVSP`. Se quiser, pode digitar o código exato do
@@ -76,10 +82,11 @@ Yahoo também (`PETR4.SA`, `^GSPC`, `BRL=X`).
 
 ## De onde vêm os índices de comparação
 
-| Índice | Fonte | Reserva |
+| Série | Fonte | Reserva |
 |---|---|---|
 | CDI | Banco Central — série 12 do SGS (diária) | IPEA Data `BM12_TJCDI12` (mensal) |
 | IPCA | Banco Central — série 433 do SGS (mensal) | IPEA Data `PRECOS12_IPCAG12` |
+| CPI | BLS — `CUUR0000SA0`, número índice mensal | — |
 | Ibovespa | Yahoo Finance (`^BVSP`) | — |
 | S&P 500 | Yahoo Finance (`^GSPC`) | — |
 
@@ -111,7 +118,8 @@ caso o app também avisa.
 | `app.py` | App web (Streamlit) |
 | `financeiro.py` | Busca das cotações e cálculo — compartilhado pelos dois |
 | `tickers.py` | Traduz o que você digita para o código do Yahoo Finance |
-| `indices.py` | Curvas de CDI, IPCA, Ibovespa e S&P 500 para comparação |
+| `macro.py` | Séries de CDI, IPCA e CPI (Banco Central, IPEA, BLS) |
+| `indices.py` | Põe os índices na mesma régua do ativo, para o gráfico |
 | `Retorno_Acumulado_Ativos_COLAB.ipynb` | Notebook do Google Colab |
 | `GUIA-CELULAR.md` | Como publicar e usar no celular |
 | `rodar.sh` / `web.sh` | Atalhos para rodar o terminal / o app web |

@@ -65,6 +65,20 @@ CONFUSOES = {
 }
 
 
+# Séries macro aceitas no campo de busca. Não são ativos negociados e não
+# existem no Yahoo — o financeiro.py as trata por um caminho próprio.
+MACRO = {
+    "CDI": "CDI", "DI": "CDI",
+    "IPCA": "IPCA", "INFLACAO": "IPCA", "INFLAÇÃO": "IPCA", "IPCABR": "IPCA",
+    "CPI": "CPI", "CPIUS": "CPI", "INFLACAOEUA": "CPI", "INFLACAOUSA": "CPI",
+}
+
+
+def macro_de(entrada: str):
+    """Nome da série macro que o usuário digitou, ou None."""
+    return MACRO.get(normalizar(entrada))
+
+
 def sugerir(entrada: str):
     """Dica quando o código digitado não existe (ex: 'IBOV11')."""
     codigo = normalizar(entrada)
