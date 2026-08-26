@@ -7,6 +7,7 @@ Fonte dos dados:    Yahoo Finance.
 import traceback
 from datetime import date, datetime, timedelta
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -51,6 +52,59 @@ def _hoje_no_brasil() -> date:
         return datetime.now(ZoneInfo("America/Sao_Paulo")).date()
     except Exception:
         return date.today()
+
+
+def grafico_curvas(colunas: dict, cores: list):
+    """Linhas do retorno acumulado, com leitura pelo mouse.
+
+    O st.line_chart mostra no tooltip só a série mais próxima do cursor. Aqui
+    uma régua vertical acompanha o mouse e o tooltip traz a data e o valor de
+    todas as linhas de uma vez — que é o que serve para comparar. O pivot é o
+    que permite isso: transforma as séries em colunas na hora de montar o
+    tooltip, sem mexer nos dados desenhados.
+    """
+    nomes = list(colunas)
+    largo = pd.DataFrame(colunas)
+    largo.index.name = "Data"
+    # Em fração, e não em pontos percentuais, para o eixo e o tooltip poderem
+    # usar o formato de porcentagem do Vega e sair "+48,01%" em vez de "48.01".
+    longo = (largo / 100).reset_index().melt(
+        id_vars="Data", var_name="Série", value_name="Retorno"
+    )
+
+    escala = alt.Scale(domain=nomes, range=cores)
+    base = alt.Chart(longo).encode(x=alt.X("Data:T", title=None))
+
+    linhas = base.mark_line(strokeWidth=2).encode(
+        y=alt.Y("Retorno:Q", title=None, axis=alt.Axis(format="+.0%")),
+        color=alt.Color(
+            "Série:N", scale=escala,
+            legend=alt.Legend(orient="bottom", title=None),
+        ),
+    )
+
+    # Ponto de referência: o mais próximo do cursor no eixo do tempo.
+    perto = alt.selection_point(
+        fields=["Data"], nearest=True, on="pointerover",
+        clear="pointerout", empty=False,
+    )
+
+    # Camada invisível que captura o movimento do mouse ao longo do gráfico.
+    sensor = base.mark_point().encode(
+        y=alt.Y("Retorno:Q"), opacity=alt.value(0)
+    ).add_params(perto)
+
+    marcas = linhas.mark_point(filled=True, size=70).encode(
+        opacity=alt.condition(perto, alt.value(1), alt.value(0))
+    )
+
+    regua = base.mark_rule(color="#9AA0A6", strokeWidth=1).encode(
+        opacity=alt.condition(perto, alt.value(0.7), alt.value(0)),
+        tooltip=[alt.Tooltip("Data:T", title="Data", format="%d/%m/%Y")]
+        + [alt.Tooltip(f"{nome}:Q", title=nome, format="+.2%") for nome in nomes],
+    ).transform_pivot("Série", value="Retorno", groupby=["Data"])
+
+    return alt.layer(linhas, sensor, marcas, regua).properties(height=300)
 
 
 def taxa(valor, sufixo):
@@ -274,8 +328,11 @@ if calcular_agora or st.session_state.get("ja_calculou"):
                 if recado:
                     avisos.append(recado)
 
-    st.line_chart(pd.DataFrame(colunas), color=cores, height=300)
-    st.caption("Retorno acumulado em %, todos partindo de zero na data inicial.")
+    st.altair_chart(grafico_curvas(colunas, cores), use_container_width=True)
+    st.caption(
+        "Retorno acumulado em %, todos partindo de zero na data inicial. "
+        "Passe o mouse sobre o gráfico para ver a data e o valor de cada linha."
+    )
 
     if "S&P 500" in colunas and moeda == "BRL":
         avisos.append(

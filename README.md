@@ -70,8 +70,9 @@ Yahoo também (`PETR4.SA`, `^GSPC`, `BRL=X`).
 - No app web: gráfico de linhas da curva de retorno, com caixas logo acima
   dele para marcar **CDI, IPCA, Ibovespa e S&P 500** — o que estiver marcado
   entra no gráfico no mesmo período, partindo de zero na data inicial, com o
-  placar de quanto o ativo rendeu a mais ou a menos. E download do histórico
-  em CSV.
+  placar de quanto o ativo rendeu a mais ou a menos. Passando o mouse pelo
+  gráfico, uma régua acompanha o cursor e mostra a data e o retorno de todas
+  as linhas naquele dia. E download do histórico em CSV.
 
 ## De onde vêm os índices de comparação
 
