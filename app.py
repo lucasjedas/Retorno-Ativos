@@ -58,29 +58,48 @@ def grafico_curvas(colunas: dict, cores: list):
     """Linhas do retorno acumulado, com leitura pelo mouse.
 
     O st.line_chart mostra no tooltip só a série mais próxima do cursor. Aqui
-    uma régua vertical acompanha o mouse e o tooltip traz a data e o valor de
-    todas as linhas de uma vez — que é o que serve para comparar. O pivot é o
-    que permite isso: transforma as séries em colunas na hora de montar o
-    tooltip, sem mexer nos dados desenhados.
+    uma régua vertical acompanha o mouse e o tooltip traz a data e o retorno
+    de todas as linhas de uma vez — que é o que serve para comparar.
+
+    Duas decisões que parecem rodeio e não são:
+
+    1. O texto do tooltip sai pronto do pandas, uma coluna por série. O Vega
+       formata número no padrão dos EUA e o Streamlit não deixa trocar o
+       idioma dele; passando texto, sai "+10,96%" e não "0.109604671771".
+    2. Quem carrega o tooltip é a camada invisível que captura o mouse, não a
+       régua. Com 'nearest', o Vega divide o gráfico inteiro em faixas — uma
+       por data — e é essa faixa que fica debaixo do cursor em qualquer ponto
+       do gráfico. A régua tem 1px: só apareceria acertando o pixel dela.
     """
     nomes = list(colunas)
     largo = pd.DataFrame(colunas)
     largo.index.name = "Data"
-    # Em fração, e não em pontos percentuais, para o eixo e o tooltip poderem
-    # usar o formato de porcentagem do Vega e sair "+48,01%" em vez de "48.01".
+    # Em fração, e não em pontos percentuais, para o eixo poder usar o formato
+    # de porcentagem do Vega e sair "+25%" em vez de "25".
     longo = (largo / 100).reset_index().melt(
         id_vars="Data", var_name="Série", value_name="Retorno"
     )
 
+    # Uma linha por data, com a data e cada série já escritas em português.
+    rotulos = pd.DataFrame({"Data": largo.index})
+    rotulos["Dia"] = [data_br(d) for d in largo.index]
+    for nome in nomes:
+        rotulos[nome] = [
+            "—" if pd.isna(v) else pct(v / 100) for v in largo[nome]
+        ]
+
     escala = alt.Scale(domain=nomes, range=cores)
     base = alt.Chart(longo).encode(x=alt.X("Data:T", title=None))
 
+    # tooltip=None nas camadas de baixo: o tema do Streamlit liga o tooltip
+    # automático do Vega, que mostrava o valor cru por cima do texto formatado.
     linhas = base.mark_line(strokeWidth=2).encode(
         y=alt.Y("Retorno:Q", title=None, axis=alt.Axis(format="+.0%")),
         color=alt.Color(
             "Série:N", scale=escala,
             legend=alt.Legend(orient="bottom", title=None),
         ),
+        tooltip=alt.value(None),
     )
 
     # Ponto de referência: o mais próximo do cursor no eixo do tempo.
@@ -89,22 +108,29 @@ def grafico_curvas(colunas: dict, cores: list):
         clear="pointerout", empty=False,
     )
 
-    # Camada invisível que captura o movimento do mouse ao longo do gráfico.
-    sensor = base.mark_point().encode(
-        y=alt.Y("Retorno:Q"), opacity=alt.value(0)
-    ).add_params(perto)
-
     marcas = linhas.mark_point(filled=True, size=70).encode(
-        opacity=alt.condition(perto, alt.value(1), alt.value(0))
+        opacity=alt.condition(perto, alt.value(1), alt.value(0)),
+        tooltip=alt.value(None),
     )
 
-    regua = base.mark_rule(color="#9AA0A6", strokeWidth=1).encode(
+    regua = alt.Chart(rotulos).mark_rule(
+        color="#9AA0A6", strokeWidth=1
+    ).encode(
+        x=alt.X("Data:T", title=None),
         opacity=alt.condition(perto, alt.value(0.7), alt.value(0)),
-        tooltip=[alt.Tooltip("Data:T", title="Data", format="%d/%m/%Y")]
-        + [alt.Tooltip(f"{nome}:Q", title=nome, format="+.2%") for nome in nomes],
-    ).transform_pivot("Série", value="Retorno", groupby=["Data"])
+        tooltip=alt.value(None),
+    )
 
-    return alt.layer(linhas, sensor, marcas, regua).properties(height=300)
+    # Por último, para ficar por cima de todo o resto e receber o mouse antes
+    # das outras camadas.
+    sensor = alt.Chart(rotulos).mark_point().encode(
+        x=alt.X("Data:T", title=None),
+        opacity=alt.value(0),
+        tooltip=[alt.Tooltip("Dia:N", title="Data")]
+        + [alt.Tooltip(f"{nome}:N", title=nome) for nome in nomes],
+    ).add_params(perto)
+
+    return alt.layer(linhas, marcas, regua, sensor).properties(height=300)
 
 
 def taxa(valor, sufixo):
