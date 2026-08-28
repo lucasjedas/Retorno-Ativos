@@ -262,6 +262,12 @@ if calcular_agora or st.session_state.get("ja_calculou"):
         f"{m['pregoes']} {m['cadencia']}"
     )
 
+    if m["tem_proventos"]:
+        st.info(
+            f"O retorno abaixo considera **proventos reinvestidos**. "
+            f"Só a variação de preço foi de {pct(m['retorno_preco'])}."
+        )
+
     a, b = st.columns(2)
     a.metric("Retorno acumulado", pct(m["retorno_total"]))
     b.metric("Queda máxima", pct(m["drawdown"]))
@@ -368,12 +374,6 @@ if calcular_agora or st.session_state.get("ja_calculou"):
         st.caption(
             f"“Diferença” é quanto **{rotulo_ativo}** rendeu a mais (ou a menos) "
             f"que o índice, em pontos percentuais."
-        )
-
-    if m["tem_proventos"]:
-        st.info(
-            f"O retorno acima considera **proventos reinvestidos**. "
-            f"Só a variação de preço foi de {pct(m['retorno_preco'])}."
         )
 
     with st.expander("Mais detalhes"):
