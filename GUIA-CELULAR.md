@@ -2,14 +2,19 @@
 
 Três caminhos, do mais prático ao mais simples de montar.
 
+O app web tem **duas telas**: o retorno acumulado, que abre primeiro, e as
+**opções de dólar da B3**, no botão 🎯 **Opções** logo abaixo do título. O
+botão ← Voltar traz de volta. Só o app web tem as duas — o Colab e o Sheets
+fazem apenas o retorno acumulado.
+
 ---
 
 ## Opção 1 — App web numa URL fixa (recomendado)
 
-Você abre um endereço no navegador do celular, digita o ativo e as datas.
-Sem instalar nada, sem o notebook ligado, e dá para salvar como ícone na tela
-inicial (fica parecendo um aplicativo). Hospedagem gratuita no Streamlit
-Community Cloud.
+Você abre um endereço no navegador do celular, digita o ativo e as datas —
+ou, na tela de opções, o código da opção. Sem instalar nada, sem o notebook
+ligado, e dá para salvar como ícone na tela inicial (fica parecendo um
+aplicativo). Hospedagem gratuita no Streamlit Community Cloud.
 
 Precisa de uma conta no GitHub (gratuita). São ~10 minutos, uma vez só.
 
@@ -59,6 +64,15 @@ Pronto: você recebe uma URL fixa, tipo
 
 - O app "dorme" depois de alguns dias sem uso. Quando isso acontece, o primeiro
   acesso mostra um botão para acordar e leva ~30 segundos. Depois fica rápido.
+- **A primeira consulta do dia na tela de opções demora mais** — uns segundos a
+  mais para baixar os arquivos da B3, que passam de 30 MB. Depois disso ela
+  responde na hora, porque fica tudo em cache. A superfície de volatilidade é
+  publicada uma vez por dia, depois das 18h: a primeira consulta feita após
+  esse horário atualiza os dados sozinha.
+- Na tela de opções só dá para precificar o **pregão mais recente**. A B3
+  sobrescreve o arquivo da superfície todo dia e não guarda histórico, então
+  para uma data passada é preciso abrir *Ajustes* e informar a volatilidade à
+  mão.
 - Para atualizar o app depois de mexer no código: `git add . && git commit -m "ajuste" && git push`.
   O Streamlit republica sozinho.
 - App público significa que qualquer pessoa com o link consegue abrir. Como ele
@@ -69,7 +83,8 @@ Pronto: você recebe uma URL fixa, tipo
 
 ## Opção 2 — Google Colab
 
-Já está pronto: o arquivo **`Retorno_Acumulado_Ativos_COLAB.ipynb`**.
+Já está pronto: o arquivo **`Retorno_Acumulado_Ativos_COLAB.ipynb`**. Ele faz
+só o retorno acumulado; as opções de dólar existem no app web e no terminal.
 
 1. Abra <https://drive.google.com> e envie o arquivo `.ipynb` para o seu Drive
    (ou vá em <https://colab.research.google.com> → *Upload* → escolha o arquivo).
@@ -91,8 +106,8 @@ criar conta em lugar nenhum.
 
 ## Opção 3 — Google Sheets (sem código, mais limitado)
 
-Para consultas simples, o Google Sheets tem a função `GOOGLEFINANCE` e o app do
-Sheets funciona bem no celular. Numa planilha:
+Para consultas simples de retorno, o Google Sheets tem a função `GOOGLEFINANCE`
+e o app do Sheets funciona bem no celular. Numa planilha:
 
 ```
 =GOOGLEFINANCE("BVMF:PETR4"; "close"; DATA(2020;1;1))
