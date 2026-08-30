@@ -29,6 +29,21 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# --------------------------------------------------------------------------
+# Navegação
+# --------------------------------------------------------------------------
+# Duas telas no mesmo script, escolhidas por session_state em vez da pasta
+# pages/ do Streamlit: a pasta abre barra lateral, e este app é feito para o
+# celular. A página de opções é importada só quando é a vez dela — ela puxa
+# arquivos grandes da B3 e não tem por que carregar quem só quer o retorno.
+st.session_state.setdefault("pagina", "retorno")
+
+if st.session_state["pagina"] == "opcoes":
+    import pagina_opcoes
+
+    pagina_opcoes.render()
+    st.stop()
+
 # Suba este número sempre que o formato devolvido pelas funções em cache
 # mudar. Ele entra na chave, e é o que impede o Streamlit de servir, depois
 # de um deploy, um resultado gravado no formato anterior — o corpo da função
@@ -192,6 +207,10 @@ def buscar_indice(nome: str, inicio: date, fim: date, formato: int = FORMATO_CAC
 # --------------------------------------------------------------------------
 st.title("📈 Retorno acumulado")
 st.caption("Ações, ETFs, FIIs, BDRs, índices (BR/EUA), câmbio e cripto · dados do Yahoo Finance")
+
+if st.button("🎯 Opções", width="stretch"):
+    st.session_state["pagina"] = "opcoes"
+    st.rerun()
 
 hoje = _hoje_no_brasil()
 st.session_state.setdefault("data_inicio", hoje - timedelta(days=365))
