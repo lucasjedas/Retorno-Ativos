@@ -58,10 +58,23 @@ CODIGO = re.compile(r"^(?P<ativo>[A-Z]{3})(?P<mes>[FGHJKMNQUVXZ])(?P<ano>\d{2})"
 
 MESES = {"F": 1, "G": 2, "H": 3, "J": 4, "K": 5, "M": 6,
          "N": 7, "Q": 8, "U": 9, "V": 10, "X": 11, "Z": 12}
+LETRAS = {mes: letra for letra, mes in MESES.items()}
+
+NOMES_MES = ("janeiro", "fevereiro", "março", "abril", "maio", "junho",
+             "julho", "agosto", "setembro", "outubro", "novembro", "dezembro")
+
+# O que este programa sabe precificar. A volatilidade vem da superfície de
+# dólar da B3, então só valem os dois contratos de dólar — as opções de ação
+# têm outro formato de código e precisariam de outra superfície.
+ATIVOS = {
+    "DOL": {"nome": "Dólar cheio", "tamanho": "US$ 50.000", "cotacao_por": 1000},
+    "WDO": {"nome": "Mini dólar", "tamanho": "US$ 10.000", "cotacao_por": 1000},
+}
 
 STRIKE_EM_CENTAVOS = 20_000   # acima disso o strike veio com centavos à mostra
 
 TIPO_POR_LETRA = {"C": "call", "P": "put"}
+TIPOS_LETRA = {tipo: letra for letra, tipo in TIPO_POR_LETRA.items()}
 
 
 class CodigoInvalido(Exception):
@@ -99,6 +112,40 @@ def ler_codigo(texto: str) -> dict:
         "futuro": f"{achado['ativo']}{achado['mes']}{achado['ano']}",
         "digitado": texto,
     }
+
+
+def montar_codigo(ativo: str, tipo: str, mes: int, ano: int,
+                  strike_reais: float) -> str:
+    """Monta o código da B3 a partir das partes escolhidas na tela.
+
+    É o caminho inverso do `ler_codigo()`, e existe para quem não quer digitar
+    treze caracteres na mão: escolhendo ativo, tipo, mês, ano e o strike em
+    reais, o código sai certo por construção.
+
+    O strike entra em reais por dólar (5.20) e vira pontos — reais por
+    US$ 1.000 —, que é como a B3 escreve: 5,20 -> 5200 -> "005200".
+    """
+    ativo = (ativo or "").strip().upper()
+    if ativo not in ATIVOS:
+        raise CodigoInvalido(
+            f"{ativo!r} não é um ativo com opção de dólar. "
+            f"Vale {' ou '.join(ATIVOS)}."
+        )
+    tipo = (tipo or "").strip().lower()
+    if tipo not in TIPOS_LETRA:
+        raise CodigoInvalido("o tipo precisa ser 'call' ou 'put'")
+    if mes not in LETRAS:
+        raise CodigoInvalido(f"mês inválido: {mes}")
+    if not 2000 <= ano <= 2099:
+        raise CodigoInvalido(f"ano fora do alcance do código de dois dígitos: {ano}")
+
+    pontos = round(strike_reais * ATIVOS[ativo]["cotacao_por"])
+    if not 0 < pontos < 1_000_000:
+        raise CodigoInvalido(
+            f"strike de R$ {strike_reais} não cabe no código (viraria {pontos} pontos)"
+        )
+    letra = LETRAS[mes]
+    return f"{ativo}{letra}{ano % 100:02d}{TIPOS_LETRA[tipo]}{pontos:06d}"
 
 
 def _strikes_vizinhos(cadastro: dict, partes: dict, quantos: int = 8) -> list:
@@ -276,6 +323,8 @@ def precificar(codigo: str, data_referencia: date, vol: float = None,
         "origem_vol": origem_vol,
         "smile": smile,
         "multiplicador": multiplicador,
+        "cotacao_por": float(registro["AsstQtnQty"] or 1000),
+        "tamanho": ATIVOS.get(partes["ativo"], {}).get("tamanho", ""),
         "premio": premio,
         "premio_reais": premio * multiplicador,
         "gregas": sensibilidades,

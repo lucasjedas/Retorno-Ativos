@@ -29,9 +29,12 @@ from opcao import data_br, num, pct
 
 # Mesmo papel do FORMATO_CACHE do app.py: entra na chave para o Cloud não
 # servir, depois de um deploy, um resultado gravado no formato anterior.
-FORMATO_CACHE = 1
+FORMATO_CACHE = 2
 
-EXEMPLOS = ["DOLN27P005200", "DOLN27C006000", "DOLF28C006500", "WDOF27C005250"]
+# Abaixo desta distância entre futuro e strike a opção é tratada como "no
+# dinheiro" — chamar de dentro ou fora uma diferença de 0,3% engana mais do
+# que informa.
+PERTO_DO_DINHEIRO = 0.005
 
 
 def _hoje_no_brasil() -> date:
@@ -57,6 +60,38 @@ def _precificar(codigo: str, quando: date, vol, forward: str,
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
+def _vencimentos(ativo: str, formato: int = FORMATO_CACHE):
+    """Vencimentos e strikes que a B3 lista hoje -> {(ano, mês): {tipo: [R$]}}.
+
+    Alimenta as listas da tela para que só apareça o que existe de verdade.
+    Devolve {} se a B3 não responder — aí a tela cai para listas genéricas e
+    quem valida é a busca.
+    """
+    try:
+        pregao = fontes.ultimo_pregao(_hoje_no_brasil())
+        cadastro = fontes.instrumentos(pregao, ativo)
+    except (fontes.SemDados, OSError):
+        return {}
+
+    cotacao = opcoes.ATIVOS[ativo]["cotacao_por"]
+    catalogo = {}
+    for ticker, registro in cadastro.items():
+        if not registro["OptnTp"] or not registro["ExrcPric"]:
+            continue
+        try:
+            partes = opcoes.ler_codigo(ticker)
+        except opcoes.CodigoInvalido:
+            continue
+        chave = (partes["ano"], partes["mes"])
+        strikes = catalogo.setdefault(chave, {"call": set(), "put": set()})
+        strikes[partes["tipo"]].add(int(registro["ExrcPric"]) / cotacao)
+    return {
+        chave: {tipo: sorted(valores) for tipo, valores in tipos.items()}
+        for chave, tipos in catalogo.items()
+    }
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
 def _referencia_superficie(formato: int = FORMATO_CACHE):
     """Data da superfície publicada. None se ela não abrir."""
     try:
@@ -73,6 +108,61 @@ def _tabela(linhas):
     )
 
 
+def _por_dolar(pontos: float, r: dict) -> float:
+    """Pontos (reais por US$ 1.000) -> reais por dólar."""
+    return pontos / r["cotacao_por"]
+
+
+def _situacao(r: dict) -> tuple:
+    """Onde a opção está em relação ao futuro, em português de gente.
+
+    -> (título, explicação). O empate é o preço em que o resultado no
+    vencimento zera: quem compra a opção paga o prêmio hoje, então precisa
+    que o dólar passe do strike por pelo menos esse tanto.
+    """
+    futuro = _por_dolar(r["futuro"], r)
+    strike = _por_dolar(r["strike"], r)
+    premio = _por_dolar(r["premio"], r)
+    call = r["tipo"] == "call"
+    mes = opcoes.NOMES_MES[r["vencimento"].month - 1]
+    quando = f"{mes}/{r['vencimento'].year}"
+
+    distancia = abs(futuro / strike - 1)
+    if distancia < PERTO_DO_DINHEIRO:
+        titulo = "No dinheiro"
+    elif (futuro > strike) if call else (futuro < strike):
+        titulo = "Dentro do dinheiro"
+    else:
+        titulo = "Fora do dinheiro"
+
+    empate = strike + premio if call else strike - premio
+    direcao = "subir acima de" if call else "cair abaixo de"
+    virar = "acima" if call else "abaixo"
+    lado = "acima disso" if call else "abaixo disso"
+
+    if titulo == "Dentro do dinheiro":
+        posicao = (f"e o futuro já está {virar} disso hoje — o que conta, "
+                   "porém, é onde o dólar estiver no vencimento")
+    elif titulo == "No dinheiro":
+        posicao = "e o futuro está praticamente colado nesse valor"
+    else:
+        posicao = (f"e ela só vale alguma coisa no vencimento se o dólar "
+                   f"estiver {virar} disso")
+
+    explicacao = (
+        f"O futuro de {quando} está em **R$ {num(futuro, 4)}** e o strike é "
+        f"**R$ {num(strike, 2)}**. "
+        f"Como é uma {'call' if call else 'put'}, ela dá o direito de "
+        f"{'comprar' if call else 'vender'} dólar a R$ {num(strike, 2)}, "
+        f"{posicao}.\n\n"
+        f"Pagando R$ {num(premio, 4)} por dólar de prêmio, o negócio empata "
+        f"em **R$ {num(empate, 4)}** — {lado} é lucro. "
+        f"Ou seja, o dólar precisa {direcao} R$ {num(empate, 4)} até "
+        f"{data_br(r['vencimento'])}."
+    )
+    return titulo, explicacao
+
+
 def _mostrar(r: dict):
     tipo = "Call" if r["tipo"] == "call" else "Put"
     st.subheader(f"{tipo} de dólar · strike {num(r['strike'], 0)}")
@@ -86,14 +176,34 @@ def _mostrar(r: dict):
     if r["recuou"]:
         st.caption(f"Sem pregão na data pedida; usando {data_br(r['pregao'])}.")
 
-    esquerda, direita = st.columns(2)
-    esquerda.metric("Prêmio", f"{num(r['premio'], 3)} pts")
-    direita.metric("Por contrato", f"R$ {num(r['premio_reais'])}")
+    uma, duas, tres = st.columns(3)
+    uma.metric("Prêmio por dólar", f"R$ {num(_por_dolar(r['premio'], r), 4)}")
+    duas.metric(f"Por contrato ({r['tamanho']})", f"R$ {num(r['premio_reais'])}")
+    tres.metric("Na tela da B3", f"{num(r['premio'], 3)} pts")
+    st.caption(
+        "A B3 cota o prêmio em pontos, que são reais por US$ 1.000. "
+        f"Os {num(r['premio'], 3)} pontos são R$ {num(_por_dolar(r['premio'], r), 4)} "
+        f"por dólar, e o contrato tem {r['tamanho']}."
+    )
+
+    titulo, explicacao = _situacao(r)
+    (st.success if titulo == "Dentro do dinheiro" else st.info)(
+        f"**{titulo}.** {explicacao}"
+    )
+
+    if r["futuro_ajuste"]:
+        st.metric(
+            f"Futuro {r['futuro_ticker']} ({data_br(r['vencimento'])})",
+            f"R$ {num(_por_dolar(r['futuro_ajuste'], r), 4)} por dólar",
+            help=f"Preço de ajuste da B3 em {data_br(r['pregao'])}: "
+                 f"{num(r['futuro_ajuste'], 3)} pontos. É o preço a termo que "
+                 "o mercado pratica para essa data, e é dele que sai o F do modelo.",
+        )
 
     _tabela([
-        ("F — preço a termo", f"{num(r['futuro'], 3)} pts"),
+        ("F — preço a termo", f"{num(r['futuro'], 3)} pts = R$ {num(_por_dolar(r['futuro'], r), 4)}/dólar"),
         ("   origem", r["origem_futuro"]),
-        ("K — strike", f"{num(r['strike'], 0)} pts"),
+        ("K — strike", f"{num(r['strike'], 0)} pts = R$ {num(_por_dolar(r['strike'], r), 2)}/dólar"),
         ("T — prazo", f"{r['dias_corridos']}/365 = {num(r['prazo_anos'], 6)} ano"),
         ("r — juro até o vencimento", f"{pct(r['taxa'])} a.a."),
         ("   origem", r["origem_juro"]),
@@ -185,20 +295,63 @@ def render():
         )
 
     hoje = _hoje_no_brasil()
-    st.session_state.setdefault("opcao_codigo", EXEMPLOS[0])
-    codigo = st.text_input(
-        "Código da opção",
-        key="opcao_codigo",
-        placeholder="DOLN27P005200",
-        help="DOL (ou WDO) + mês + ano + C/P + strike de 6 dígitos. "
-             "DOLN27P005200 é a put de jul/27 com strike R$ 5,20.",
-    ).strip()
 
-    st.session_state.setdefault("opcao_data", hoje)
-    quando = st.date_input(
-        "Data de início", key="opcao_data", format="DD/MM/YYYY",
+    st.markdown("**Monte a opção**")
+    coluna_a, coluna_b = st.columns(2)
+    ativo = coluna_a.selectbox(
+        "Ativo", list(opcoes.ATIVOS), key="opcao_ativo",
+        format_func=lambda a: f"{a} — {opcoes.ATIVOS[a]['nome']}",
+        help="DOL é o contrato cheio (US$ 50.000); WDO é o mini (US$ 10.000).",
+    )
+    tipo = coluna_b.selectbox(
+        "Call ou Put", ["call", "put"], key="opcao_tipo",
+        format_func=lambda t: ("Call — direito de comprar" if t == "call"
+                               else "Put — direito de vender"),
+    )
+
+    catalogo = _vencimentos(ativo)
+    anos_listados = sorted({ano for ano, _ in catalogo} | {hoje.year})
+    anos = [a for a in anos_listados if a >= hoje.year] or [hoje.year]
+
+    coluna_c, coluna_d = st.columns(2)
+    ano = coluna_d.selectbox("Ano de vencimento", anos, key="opcao_ano")
+    meses_do_ano = sorted({m for a, m in catalogo if a == ano})
+    if not meses_do_ano:
+        meses_do_ano = list(range(1, 13))
+    mes = coluna_c.selectbox(
+        "Mês de vencimento", meses_do_ano, key="opcao_mes",
+        format_func=lambda m: opcoes.NOMES_MES[m - 1].capitalize(),
+    )
+
+    disponiveis = (catalogo.get((ano, mes)) or {}).get(tipo, [])
+    padrao = disponiveis[len(disponiveis) // 2] if disponiveis else 5.00
+    coluna_e, coluna_f = st.columns(2)
+    strike = coluna_e.number_input(
+        "Strike (R$ por dólar)", key="opcao_strike",
+        min_value=0.01, max_value=99.99, value=float(padrao), step=0.05,
+        format="%.2f",
+        help="O preço de exercício, em reais por dólar. Ex: 5,20.",
+    )
+    quando = coluna_f.date_input(
+        "Data de referência", key="opcao_data", format="DD/MM/YYYY",
         min_value=date(2020, 1, 1), max_value=hoje,
     )
+
+    strike_existe = True
+    if disponiveis:
+        perto = sorted(disponiveis, key=lambda k: abs(k - strike))[:7]
+        st.caption(
+            f"{len(disponiveis)} strikes listados neste vencimento. "
+            "Perto do seu: " + " · ".join(f"R$ {num(k)}" for k in sorted(perto))
+        )
+        strike_existe = strike in disponiveis
+
+    try:
+        codigo = opcoes.montar_codigo(ativo, tipo, mes, ano, strike)
+        st.caption(f"Código montado: **{codigo}**")
+    except opcoes.CodigoInvalido as erro:
+        st.error(str(erro))
+        return
 
     with st.expander("Ajustes"):
         vol_digitada = st.number_input(
@@ -214,16 +367,21 @@ def render():
                  "paridade depende do dólar à vista e fica menos precisa.",
         )
 
-    st.caption("Exemplos: " + " · ".join(EXEMPLOS))
-
     calcular = st.button("Calcular", type="primary", width="stretch")
 
     if not (calcular or st.session_state.get("opcao_ja_calculou")):
         return
     st.session_state["opcao_ja_calculou"] = True
 
-    if not codigo:
-        st.warning("Digite o código de uma opção.")
+    if not strike_existe:
+        # a busca só devolveria o mesmo recado em pontos, que não ajuda quem
+        # digitou reais — melhor parar aqui, com a sugestão na mesma unidade
+        mais_perto = min(disponiveis, key=lambda k: abs(k - strike))
+        st.warning(
+            f"A B3 não lista o strike R$ {num(strike)} para "
+            f"{opcoes.NOMES_MES[mes - 1]}/{ano}. O mais próximo é "
+            f"**R$ {num(mais_perto)}** — ajuste o campo e calcule de novo."
+        )
         return
 
     with st.spinner("Buscando na B3..."):
