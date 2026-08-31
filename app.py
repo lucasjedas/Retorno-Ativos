@@ -48,7 +48,7 @@ if st.session_state["pagina"] == "opcoes":
 # mudar. Ele entra na chave, e é o que impede o Streamlit de servir, depois
 # de um deploy, um resultado gravado no formato anterior — o corpo da função
 # em cache pode continuar idêntico enquanto o que ela devolve mudou.
-FORMATO_CACHE = 3
+FORMATO_CACHE = 4
 
 
 VERDE = "#3A9E6E"   # ganho

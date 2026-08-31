@@ -5,19 +5,38 @@ devolvida como uma série de *nível* — um número índice — para poder ser
 tratada igual a um preço: o retorno do período é o nível do fim dividido pelo
 nível do começo.
 
-| Série | Fonte                          | Reserva                    |
-|-------|--------------------------------|----------------------------|
-| CDI   | Banco Central, SGS 12 (diária) | IPEA BM12_TJCDI12 (mensal) |
-| IPCA  | Banco Central, SGS 433         | IPEA PRECOS12_IPCAG12      |
-| CPI   | BLS, CUUR0000SA0               | —                          |
+| Série | Fonte                          | Reservas, em ordem                  |
+|-------|--------------------------------|-------------------------------------|
+| CDI   | Banco Central, SGS 12 (diária) | SGS 4391 (mensal) → IPEA (mensal)   |
+| IPCA  | Banco Central, SGS 433         | IBGE 1737/2266 → IPEA               |
+| CPI   | BLS, CUUR0000SA0               | —                                   |
 
-A reserva existe porque o WAF do Banco Central responde 406 a pedidos vindos
-de servidores em nuvem: de uma máquina doméstica a API abre normalmente, do
-Streamlit Cloud não.
+As reservas existem porque o WAF do Banco Central responde 406 a pedidos
+vindos de servidores em nuvem: de uma máquina doméstica a API abre
+normalmente, do Streamlit Cloud não.
+
+**O IPEA saiu do ar em 30/08/2026** e com ele foi a única reserva que havia —
+CDI e IPCA quebraram no app publicado. Daí as duas mudanças:
+
+1. O **IBGE entrou como reserva do IPCA**, e é a fonte primária dele: o
+   agregado 1737 dá o número-índice (variável 2266) de 1979 em diante, num
+   pedido pequeno, de um provedor que não tem nada a ver com o Banco Central.
+   Reserva boa é reserva que cai junto com o titular por motivos diferentes.
+2. O CDI ganhou o **SGS 4391** (acumulado no mês) antes do IPEA. Mesmo host,
+   então não escapa do bloqueio por IP, mas é um pedido muito menor.
+
+**O 406 tem duas causas, e uma delas era defeito daqui.** Além do bloqueio por
+IP, o SGS recusa série diária longa num pedido só: 20 anos de CDI davam 406 em
+0,1s, e 10 anos levavam 19s — mais que o timeout de 15s deste módulo, ou seja,
+falhavam de qualquer jeito. Por isso `_variacoes_sgs()` fatia o período em
+blocos de `ANOS_POR_FATIA`. As mesmas duas décadas, em quatro fatias, vêm
+inteiras.
 """
 
+import gzip
 import json
 import urllib.request
+import zlib
 from datetime import timedelta
 
 import pandas as pd
@@ -25,7 +44,11 @@ import pandas as pd
 SGS = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}/dados"
 IPEA = "https://www.ipeadata.gov.br/api/odata4/ValoresSerie(SERCODIGO='{codigo}')"
 BLS = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
-ESPERA = 15  # segundos; tela parada esperando fonte fora do ar não ajuda
+IBGE = ("https://servicodados.ibge.gov.br/api/v3/agregados/{agregado}"
+        "/periodos/{inicio}-{fim}/variaveis/{variavel}?localidades=N1")
+ESPERA = 20         # segundos para a fonte principal
+ESPERA_RESERVA = 8  # a reserva desiste rápido: a tela já esperou a principal
+ANOS_POR_FATIA = 5  # o SGS recusa (406) série diária longa num pedido só
 
 CABECALHOS = {
     "User-Agent": (
@@ -41,6 +64,7 @@ SERIES = {
         "nome": "CDI — Certificado de Depósito Interbancário",
         "tipo": "variacao",          # a fonte dá a variação de cada período
         "sgs": 12,
+        "sgs_mensal": 4391,          # CDI acumulado no mês
         "ipea": "BM12_TJCDI12",
         "cor": "#7E8CA0",
     },
@@ -48,6 +72,7 @@ SERIES = {
         "nome": "IPCA — inflação oficial do Brasil",
         "tipo": "variacao",
         "sgs": 433,
+        "ibge": {"agregado": 1737, "variavel": 2266},   # número-índice
         "ipea": "PRECOS12_IPCAG12",
         "cor": "#C79A3C",
     },
@@ -71,14 +96,34 @@ def _sem_fuso(datas) -> pd.DatetimeIndex:
     return pd.DatetimeIndex(pd.to_datetime(datas, utc=True)).tz_convert(None).normalize()
 
 
-def _baixar(url: str, corpo=None):
+def _descomprimir(bruto: bytes, codificacao: str = "") -> bytes:
+    """Desfaz gzip/deflate quando a fonte comprime a resposta.
+
+    O `urllib` não descomprime sozinho. O IBGE responde com gzip de forma
+    intermitente — o CDN decide a cada pedido —, então o mesmo endereço às
+    vezes decodifica e às vezes explode com UnicodeDecodeError. Olhar só o
+    cabeçalho não basta: aqui vale também o número mágico do gzip.
+    """
+    if codificacao == "gzip" or bruto[:2] == b"\x1f\x8b":
+        return gzip.decompress(bruto)
+    if codificacao == "deflate":
+        try:
+            return zlib.decompress(bruto)
+        except zlib.error:
+            return zlib.decompress(bruto, -zlib.MAX_WBITS)   # deflate cru
+    return bruto
+
+
+def _baixar(url: str, corpo=None, espera: int = ESPERA):
     dados = json.dumps(corpo).encode("utf-8") if corpo is not None else None
     cabecalhos = dict(CABECALHOS)
     if dados:
         cabecalhos["Content-Type"] = "application/json"
     pedido = urllib.request.Request(url, data=dados, headers=cabecalhos)
-    with urllib.request.urlopen(pedido, timeout=ESPERA) as resposta:
-        return json.loads(resposta.read().decode("utf-8"))
+    with urllib.request.urlopen(pedido, timeout=espera) as resposta:
+        bruto = resposta.read()
+        codificacao = (resposta.headers.get("Content-Encoding") or "").lower()
+    return json.loads(_descomprimir(bruto, codificacao).decode("utf-8"))
 
 
 def _conferir_variacoes(taxas, nome: str):
@@ -101,20 +146,91 @@ def _conferir_variacoes(taxas, nome: str):
     return taxas
 
 
+def _fatias(inicio, fim, anos: int = ANOS_POR_FATIA):
+    """Quebra o período em blocos de no máximo `anos`, sem sobrepor."""
+    blocos = []
+    passo = pd.DateOffset(years=anos)
+    corte = pd.Timestamp(inicio)
+    limite = pd.Timestamp(fim)
+    while corte <= limite:
+        fim_bloco = min(corte + passo - pd.Timedelta(days=1), limite)
+        blocos.append((corte, fim_bloco))
+        corte = fim_bloco + pd.Timedelta(days=1)
+    return blocos
+
+
 def _variacoes_sgs(serie: int, inicio, fim):
-    url = SGS.format(serie=serie) + (
-        f"?formato=json&dataInicial={inicio:%d/%m/%Y}&dataFinal={fim:%d/%m/%Y}"
-    )
-    dados = _baixar(url)
-    if not dados:
+    """Variações da série no SGS, pedidas em fatias.
+
+    Um pedido só cobrindo décadas é recusado com 406, e mesmo dez anos passam
+    do tempo de espera. Em blocos, cada pedido volta em segundos.
+    """
+    pedacos = []
+    for comeco, termino in _fatias(inicio, fim):
+        url = SGS.format(serie=serie) + (
+            f"?formato=json&dataInicial={comeco:%d/%m/%Y}"
+            f"&dataFinal={termino:%d/%m/%Y}"
+        )
+        dados = _baixar(url)
+        if not dados:
+            continue
+        datas = _sem_fuso(
+            pd.to_datetime([x["data"] for x in dados], format="%d/%m/%Y")
+        )
+        pedacos.append(
+            pd.Series([float(x["valor"]) for x in dados], index=datas)
+        )
+    if not pedacos:
         return None
-    datas = _sem_fuso(pd.to_datetime([x["data"] for x in dados], format="%d/%m/%Y"))
-    return pd.Series([float(x["valor"]) for x in dados], index=datas).sort_index()
+    juntas = pd.concat(pedacos).sort_index()
+    return juntas[~juntas.index.duplicated(keep="first")]
+
+
+def _nivel_ibge(config: dict, inicio, fim):
+    """Número-índice do IPCA direto do IBGE, que é quem apura o índice.
+
+    O agregado devolve os meses como {"202601": "7427.72"}. Já vem em nível,
+    então não passa pela composição de variações.
+    """
+    # a mesma folga que as fontes de variação usam, para as séries começarem
+    # no mesmo mês e o acumulado não depender de qual fonte respondeu
+    desde = (pd.Timestamp(inicio) - pd.Timedelta(days=45)).strftime("%Y%m")
+    ate = pd.Timestamp(fim).strftime("%Y%m")
+    resposta = _baixar(IBGE.format(inicio=desde, fim=ate, **config))
+    if not resposta:
+        return None
+    try:
+        bruto = resposta[0]["resultados"][0]["series"][0]["serie"]
+    except (KeyError, IndexError, TypeError) as erro:
+        raise RuntimeError(f"IBGE devolveu formato inesperado: {erro}") from erro
+
+    pontos = {}
+    for periodo, valor in bruto.items():
+        try:
+            pontos[pd.Timestamp(int(periodo[:4]), int(periodo[4:]), 1)] = float(valor)
+        except (TypeError, ValueError):
+            continue          # mês sem apuração vem como "..." ou "-"
+    if not pontos:
+        return None
+    serie = pd.Series(pontos).sort_index()
+    serie.index = _sem_fuso(serie.index)
+    if float(serie.max()) < 50:
+        raise RuntimeError(
+            "IBGE: a série não parece número-índice "
+            f"(máximo de {float(serie.max()):.2f}) — variável errada?"
+        )
+    return serie[serie.index <= pd.Timestamp(fim)]
 
 
 def _variacoes_ipea(codigo: str, inicio, fim):
-    """Variações mensais do IPEA. O OData devolve a série inteira; recorto aqui."""
-    dados = _baixar(IPEA.format(codigo=codigo))["value"]
+    """Variações mensais do IPEA. O OData devolve a série inteira; recorto aqui.
+
+    Espera curta de propósito: o IPEA é a última reserva e saiu do ar em
+    30/08/2026 sem recusar a conexão — ele simplesmente não responde. Com a
+    espera cheia, cada consulta ficava 20 segundos parada antes de desistir,
+    e o usuário via a tela travar a cada clique.
+    """
+    dados = _baixar(IPEA.format(codigo=codigo), espera=ESPERA_RESERVA)["value"]
     validos = [x for x in dados if x.get("VALVALOR") is not None]
     if not validos:
         return None
@@ -165,12 +281,57 @@ def _nivel_bls(codigo: str, inicio, fim):
     return serie[(serie.index >= desde) & (serie.index <= pd.Timestamp(fim))]
 
 
+def _de_variacoes(taxas, nome: str):
+    """Variações percentuais -> número índice base 100. None se vier vazio."""
+    taxas = _conferir_variacoes(taxas, nome)
+    if taxas is None or taxas.empty:
+        return None
+    return (1 + taxas / 100).cumprod() * 100
+
+
+def _fontes_de(nome: str, config: dict, inicio, fim) -> list:
+    """As fontes da série, da melhor para a última -> [(rótulo, função)].
+
+    O rótulo vai para a tela, e "reserva" nele é o que faz o app avisar que
+    não veio da fonte principal. A ordem é deliberada: primeiro o Banco
+    Central, que é diário no CDI; depois o IBGE, que apura o IPCA e não
+    compartilha infraestrutura com o BCB; e só então as reservas mensais.
+    """
+    desde = inicio - timedelta(days=45)
+    tentativas = [(
+        "Banco Central",
+        lambda: _de_variacoes(_variacoes_sgs(config["sgs"], desde, fim), nome),
+    )]
+    if config.get("ibge"):
+        tentativas.append((
+            "IBGE (reserva)",
+            lambda: _nivel_ibge(config["ibge"], inicio, fim),
+        ))
+    if config.get("sgs_mensal"):
+        tentativas.append((
+            "Banco Central mensal (reserva)",
+            lambda: _de_variacoes(
+                _variacoes_sgs(config["sgs_mensal"], desde, fim), nome
+            ),
+        ))
+    if config.get("ipea"):
+        tentativas.append((
+            "IPEA mensal (reserva)",
+            lambda: _de_variacoes(_variacoes_ipea(config["ipea"], inicio, fim), nome),
+        ))
+    return tentativas
+
+
 def nivel(nome: str, inicio, fim):
     """Série de nível (número índice) da série macro. -> (Series, origem).
 
-    Levanta exceção se nenhuma fonte responder; quem chama decide o que
-    mostrar. Para CDI e IPCA o nível sai da composição das variações, em
-    base 100; para o CPI a fonte já entrega o número índice.
+    Tenta as fontes em ordem e devolve a primeira que responder, junto do
+    rótulo dela. Se nenhuma responder, levanta com o motivo de cada uma —
+    sem isso, um índice mudo na tela não diz se a fonte caiu, recusou o
+    pedido ou simplesmente não cobre o período.
+
+    Para CDI e IPCA o nível sai da composição das variações, em base 100;
+    para o CPI e para o IBGE a fonte já entrega o número índice.
     """
     config = SERIES[nome]
 
@@ -180,17 +341,16 @@ def nivel(nome: str, inicio, fim):
             raise RuntimeError(f"{nome}: BLS sem dados no período")
         return serie, "BLS"
 
-    try:
-        taxas = _conferir_variacoes(
-            _variacoes_sgs(config["sgs"], inicio - timedelta(days=45), fim), nome
-        )
-        if taxas is not None and not taxas.empty:
-            return (1 + taxas / 100).cumprod() * 100, "Banco Central"
-        falha = "resposta vazia"
-    except Exception as erro:
-        falha = f"{type(erro).__name__}: {erro}"
+    falhas = []
+    for rotulo, buscar in _fontes_de(nome, config, inicio, fim):
+        try:
+            serie = buscar()
+        except Exception as erro:
+            falhas.append(f"{rotulo}: {type(erro).__name__}: {erro}")
+            continue
+        if serie is None or serie.empty:
+            falhas.append(f"{rotulo}: sem dados no período")
+            continue
+        return serie, rotulo
 
-    taxas = _conferir_variacoes(_variacoes_ipea(config["ipea"], inicio, fim), nome)
-    if taxas is None or taxas.empty:
-        raise RuntimeError(f"{nome}: Banco Central ({falha}) e IPEA sem dados")
-    return (1 + taxas / 100).cumprod() * 100, f"IPEA (mensal) — Banco Central recusou: {falha}"
+    raise RuntimeError(f"{nome}: nenhuma fonte respondeu — " + "; ".join(falhas))

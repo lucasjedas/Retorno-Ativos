@@ -99,8 +99,8 @@ def curva(nome: str, inicio, fim, datas_alvo, bruto=None):
         return None, f"{nome}: série inconsistente"
 
     avisos = []
-    if origem.startswith("IPEA"):
-        avisos.append(f"{nome} veio do {origem}")
+    if "reserva" in origem:
+        avisos.append(f"{nome} veio de fonte de reserva: {origem}")
     ultima = serie.index[-1]
     if ultima < alvo[-1] - pd.Timedelta(days=20):
         avisos.append(f"{nome} vai até {ultima:%d/%m/%Y} (divulgação com defasagem)")
